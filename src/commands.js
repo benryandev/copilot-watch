@@ -4,7 +4,7 @@ import { resolveWatchTarget } from './resolve.js';
 import { chatKey } from './store.js';
 import { parseTrial, createTrial, getTrial, MAX_PER_CHAT, PAGE } from './paper.js';
 
-export const MAX_ACCOUNTS = 5, MAX_CHANNELS_PER_GUILD = 3, MAX_CHATS = 300;
+export const MAX_ACCOUNTS = 5, MAX_CHANNELS_PER_GUILD = 3, MAX_CHATS = 300, MAX_WATCHED = 300, MAX_DC_PER_USER = 3;
 
 /** Active copies for an account from the (cached) leaderboard. */
 export const subsFor = (rows, accountId) => rows.filter(r => r.followerId === accountId && r.status === 'active');
@@ -32,8 +32,9 @@ export async function handleCommand(cmd, deps) {
       if (chat && !canChange(cmd, chat)) return { text: T.notOwner, ephemeral: true };
       if (!chat && (await store.countChats()) >= MAX_CHATS) return { text: T.full };
       if (cmd.platform === 'dc' && !chat && cmd.guildId) {
-        const inGuild = (await store.listChats()).filter(c => c.platform === 'dc' && c.guildId === cmd.guildId);
-        if (inGuild.length >= MAX_CHANNELS_PER_GUILD) return { text: T.tooManyChannels };
+        const dcs = (await store.listChats()).filter(c => c.platform === 'dc');
+        if (dcs.filter(c => c.guildId === cmd.guildId).length >= MAX_CHANNELS_PER_GUILD) return { text: T.tooManyChannels };
+        if (dcs.filter(c => c.ownerUserId === cmd.userId).length >= MAX_DC_PER_USER) return { text: T.tooManyForUser };
       }
       let r;
       try { r = await resolveWatchTarget(args[0], args[1], { strike }); } catch { return { text: T.strikeDown }; }
@@ -41,6 +42,8 @@ export async function handleCommand(cmd, deps) {
       const have = chat?.accounts || [];
       const add = r.accounts.filter(a => !have.some(h => h.accountId === a.accountId));
       if (have.length + add.length > MAX_ACCOUNTS) return { text: T.tooMany };
+      if (add.length) { const known = await Promise.all(add.map(a => store.getAcct(a.accountId)));
+        if (known.some(k => !k) && (await store.countAccts()) + known.filter(k => !k).length > MAX_WATCHED) return { text: T.full }; }
       const next = chat || { platform: cmd.platform, chatId: cmd.chatId, guildId: cmd.guildId || null, ownerUserId: cmd.userId, accounts: [], settings: { liq: 5 }, createdAt: now() };
       next.accounts = [...have, ...add];
       await store.putChat(next);

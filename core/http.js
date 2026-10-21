@@ -26,6 +26,7 @@ export async function hlInfo(body, { want = null, waits = [0, 2000, 5000, 10000]
 
 /** Public GET on Strike's API. Returns {} after repeated failures (callers treat {} as "no data"). */
 export async function strikeGet(path, { fetch = globalThis.fetch, tries = 3, pause = 500 } = {}) {
+  tries = tries ?? 3;
   for (let i = 0; i < tries; i++) {
     try {
       const r = await fetch(STRIKE_API + path);

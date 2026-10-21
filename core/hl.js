@@ -31,9 +31,9 @@ const dexState = st => ({
 });
 
 /** Both dexes: {main, xyz}, each {accountValue, marginUsed, positions: [{coin, szi, liqPx, lev}]}. xyz coins carry the "xyz:" prefix. */
-export async function clearinghouse(user, { fetch } = {}) {
-  const main = await hlInfo({ type: 'clearinghouseState', user }, { want: Object, fetch });
-  const xyz = await hlInfo({ type: 'clearinghouseState', user, dex: 'xyz' }, { want: Object, fetch });
+export async function clearinghouse(user, { fetch, waits } = {}) {
+  const main = await hlInfo({ type: 'clearinghouseState', user }, { want: Object, fetch, ...(waits ? { waits } : {}) });
+  const xyz = await hlInfo({ type: 'clearinghouseState', user, dex: 'xyz' }, { want: Object, fetch, ...(waits ? { waits } : {}) });
   const x = dexState(xyz);
   for (const p of x.positions) if (!p.coin.startsWith('xyz:')) p.coin = `xyz:${p.coin}`;
   return { main: dexState(main), xyz: x };

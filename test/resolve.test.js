@@ -26,3 +26,9 @@ test('UUID of a sub → that sub only, labelled with its name', async () => {
 test('bad input', async () => {
   for (const s of ['0xabc', '', 'x'.repeat(5000), 'a b', '<script>']) assert.equal((await resolveWatchTarget(s, undefined, { strike: fakeStrike() })).reason, 'bad_input', s.slice(0, 20));
 });
+test('labels from Strike lose link and handle characters', async () => {
+  const strike = fakeStrike({ accountByAddress: async () => ({ accountId: 'm', nickname: 'x.com/@evil', subs: [{ id: 's', name: 'Claim https://strike-claim.xyz now' }] }) });
+  const r = await resolveWatchTarget(ADDR, undefined, { strike });
+  assert.deepEqual(r.accounts.map(a => a.label), ['xcomevil (main)', 'xcomevil / Claim httpsstrike-claimxyz now']);
+  assert.ok(r.accounts.every(a => !/[.:/@]/.test(a.label)));
+});

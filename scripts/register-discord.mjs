@@ -21,7 +21,9 @@ const commands = [
     { type: NUM, name: 'size', description: 'Paper account size, US$ (default 1000)', required: false, min_value: 10, max_value: 1000000 } ] },
   { name: 'stop', description: 'Stop all watches in this channel and delete its data' },
   { name: 'help', description: 'How Copilot Watch works' },
-].map(c => ({ ...c, contexts: [0], integration_types: [0] }));
+].map(c => ({ ...c, contexts: [0], integration_types: [0],
+  // Changing what a channel watches needs Manage Server by default; server admins can widen it in Server Settings → Integrations.
+  ...(['watch', 'unwatch', 'settings', 'stop', 'paper'].includes(c.name) ? { default_member_permissions: '32' } : {}) }));
 
 async function call(method, path, body) {
   const r = await fetch(`https://discord.com/api/v10${path}`, { method, headers: H, body: body ? JSON.stringify(body) : undefined });

@@ -30,8 +30,9 @@ export function createStore(kv, { now = () => Date.now() } = {}) {
     async deleteChat(key) {
       const chat = await getJ(key); if (!chat) return false;
       for (const a of chat.accounts) await s.unlinkAcct(a.accountId, key);
-      await kv.delete(key); return true;
+      await kv.delete(key); await kv.delete(`pending:${key}`); return true;
     },
+    async countAccts() { return (await listAll('acct:')).length; },
     async countChats() { return (await listAll('chat:')).length; },
     async listChats() { const keys = await listAll('chat:'); return (await Promise.all(keys.map(getJ))).filter(Boolean); },
     getAcct: id => getJ(`acct:${id}`),
@@ -72,6 +73,8 @@ export function createStore(kv, { now = () => Date.now() } = {}) {
       if (v != null) { await putJ(`cache:${name}`, { at: now(), v }); return v; }
       return c ? c.v : null;
     },
+    getCache: async name => (await getJ(`cache:${name}`))?.v ?? null,
+    setCache: (name, v) => putJ(`cache:${name}`, { at: now(), v }),
     /** Strike caches the leaderboard ~10 minutes, so do the same. */
     async cachedLeaderboard(loader, maxAgeMs = 10 * 60 * 1000) {
       const c = await getJ('cache:leaderboard');

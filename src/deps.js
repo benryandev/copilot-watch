@@ -10,12 +10,12 @@ export function makeDeps(env) {
     accountByNickname: n => strikeApi.accountByNickname(n),
     accountById: id => strikeApi.accountById(id),
     leaderboard: (o = {}) => strikeApi.leaderboard(o),
-    copyPositions: id => strikeApi.copyPositions(id),
-    fills: (id, o = {}) => strikeApi.fills(id, o),
+    copyPositions: id => strikeApi.copyPositions(id, { tries: 2 }),
+    fills: (id, o = {}) => strikeApi.fills(id, { tries: 2, ...o }),
     markets: () => strikeApi.markets(),
   };
   const hl = {
-    clearinghouse: u => hlApi.clearinghouse(u, { fetch: globalThis.fetch }),
+    clearinghouse: u => hlApi.clearinghouse(u, { waits: [0, 2000] }),
     fillsByTime: (u, t0, t1) => hlApi.fillsByTime(u, t0, t1, { maxPages: 1, pause: 0 }),
     ledger: (u, t0) => hlApi.ledger(u, t0),
     meta: async () => {

@@ -28,6 +28,7 @@ export const T = {
   ambiguousSub: 'Two sub-accounts share that name. Copy the sub-account\'s Account ID from Strike\'s Sub-accounts page and use /watch <id>.',
   subNotFound: names => `No active sub-account with that name. Sub-accounts on this address: ${names.length ? names.join(', ') : 'none'}.`,
   tooMany: 'This chat already watches 5 accounts. Use /unwatch <account> first.',
+  tooManyForUser: 'You already have Copilot Watch in 3 channels. Use /stop in one of them first.',
   tooManyChannels: 'This server already has Copilot Watch in 3 channels. Use /stop in one of them first.',
   strikeDown: 'Couldn\'t reach Strike just now. Try again in a minute.',
   notOwner: 'Only the person who set up this watch, or a member with Manage Server, can change it.',

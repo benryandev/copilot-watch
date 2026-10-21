@@ -6,8 +6,10 @@ export const RE = {
   nick: /^@?[A-Za-z0-9_.-]{2,32}$/,
 };
 
-const mainLabel = nick => (nick ? `${nick} (main)` : 'Main account');
-const subLabel = (nick, name) => (nick ? `${nick} / ${name}` : name || 'Sub-account');
+/** Names come from Strike and are chosen by the account owner: keep letters, digits, space, _ and - only, so a name can't carry a link or handle. */
+export const clean = (s, fallback) => String(s ?? '').replace(/[^A-Za-z0-9 _-]/g, '').replace(/\s+/g, ' ').trim().slice(0, 32) || fallback;
+const mainLabel = nick => (nick ? `${clean(nick, 'Account')} (main)` : 'Main account');
+const subLabel = (nick, name) => (nick ? `${clean(nick, 'Account')} / ${clean(name, 'Sub-account')}` : clean(name, 'Sub-account'));
 
 /**
  * @returns {Promise<{ok: true, accounts: {accountId: string, label: string}[]} | {ok: false, reason: 'not_found'|'ambiguous_sub'|'sub_not_found'|'bad_input', names?: string[]}>}
@@ -23,7 +25,7 @@ export async function resolveWatchTarget(input, subName, { strike }) {
   } else if (RE.uuid.test(id)) {
     const a = await strike.accountById(id);
     if (!a) return { ok: false, reason: 'not_found' };
-    if (a.isSub) return { ok: true, accounts: [{ accountId: a.accountId, label: a.name || 'Sub-account' }] };
+    if (a.isSub) return { ok: true, accounts: [{ accountId: a.accountId, label: clean(a.name, 'Sub-account') }] };
     main = { accountId: a.accountId, nickname: a.nickname, subs: a.subs };
   } else if (RE.nick.test(raw)) {
     const n = await strike.accountByNickname(raw);
@@ -36,7 +38,7 @@ export async function resolveWatchTarget(input, subName, { strike }) {
     if (want === 'main') return { ok: true, accounts: [{ accountId: main.accountId, label: mainLabel(main.nickname) }] };
     const hits = main.subs.filter(s => (s.name || '').toLowerCase() === want);
     if (hits.length > 1) return { ok: false, reason: 'ambiguous_sub' };
-    if (!hits.length) return { ok: false, reason: 'sub_not_found', names: main.subs.map(s => s.name) };
+    if (!hits.length) return { ok: false, reason: 'sub_not_found', names: main.subs.map(s => clean(s.name, 'unnamed')) };
     return { ok: true, accounts: [{ accountId: hits[0].id, label: subLabel(main.nickname, hits[0].name) }] };
   }
   return { ok: true, accounts: [

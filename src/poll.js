@@ -40,6 +40,9 @@ export async function poll(env, deps = null) {
   const res = { accounts: 0, leads: 0, sent: 0, skippedLeads: 0, deferredLeads: 0 };
   const chats = await d.store.listChats();
   if (!chats.length) { console.log(res); return res; }
+  const lock = await d.store.getCache('poll-lock'); // start time of a run still going, or 0
+  if (!d.noLock && lock && now - lock < 110_000) { res.skippedRun = true; console.log(res); return res; } // previous run still going
+  if (!d.noLock) await d.store.setCache('poll-lock', now);
 
   const accounts = new Map();
   for (const c of chats) for (const a of c.accounts) {
@@ -103,7 +106,8 @@ export async function poll(env, deps = null) {
     // keep last round's data where Strike didn't answer, so a blip never resets the baseline
     const base = { ...c, copies: c.copies ?? prev?.copies ?? [], fills: c.fills ?? prev?.fills ?? [], subs: { ...(prev?.subs || {}), ...c.subs } };
     for (const [l, s] of Object.entries(base.subs)) if (s.status !== 'active' && !c.subs[l]) delete base.subs[l];
-    await d.store.putAcct(id, { chats: a.chats.map(ch => `chat:${ch.platform}:${ch.chatId}`), base });
+    const still = (await Promise.all(a.chats.map(ch => d.store.getChat(`chat:${ch.platform}:${ch.chatId}`)))).filter(Boolean);
+    if (still.length) await d.store.putAcct(id, { chats: still.map(ch => `chat:${ch.platform}:${ch.chatId}`), base }); // skip if /stop ran meanwhile
   }
   for (const c of chats) { // undelivered alerts from earlier polls go out first
     const key = `chat:${c.platform}:${c.chatId}`, p = await d.store.getPending(key);
@@ -119,6 +123,7 @@ export async function poll(env, deps = null) {
     if (ok) { res.sent += batch.length; if (hadPending) await d.store.putPending(key, []); }
     else { res.failed = (res.failed || 0) + 1; await d.store.putPending(key, batch.map(({ kind, key: k, text }) => ({ kind, key: k, text }))); }
   }
+  if (!d.noLock) await d.store.setCache('poll-lock', 0);
   console.log(res);
   return res;
 }

@@ -50,13 +50,13 @@ export async function premiumIndex({ fetch } = {}) {
  * Falls back to /v2/positions + premiumIndex (subId and leadId null) if the copy route needs auth again.
  * Returns null when Strike can't be read at all (callers must not treat that as "no positions").
  */
-export async function copyPositions(accountId, { fetch } = {}) {
-  const r = await strikeGet(`/v2/copy/positions?account_id=${q(accountId)}`, { fetch });
+export async function copyPositions(accountId, { fetch, tries } = {}) {
+  const r = await strikeGet(`/v2/copy/positions?account_id=${q(accountId)}`, { fetch, tries });
   if (Array.isArray(r.positions)) return r.positions.map(p => ({
     subId: p.subscription_id || null, leadId: (p.lead_account_id || '').toLowerCase() || null, market: p.market, side: p.side,
     size: Math.abs(F(p.size)), leverage: F(p.leverage), marginMode: p.margin_mode, entry: F(p.entry_price), mark: F(p.mark_price),
     liq: F(p.liquidation_price) || null, pnl: F(p.pnl || 0), own: !!p.own }));
-  const pos = await strikeGet(`/v2/positions?account_id=${q(accountId)}`, { fetch });
+  const pos = await strikeGet(`/v2/positions?account_id=${q(accountId)}`, { fetch, tries });
   if (!Array.isArray(pos.positions)) return null;
   const marks = await premiumIndex({ fetch });
   return pos.positions.filter(p => F(p.size)).map(p => ({
@@ -68,8 +68,8 @@ export async function copyPositions(accountId, { fetch } = {}) {
 const tagSub = cid => (cid || '').startsWith('copy:') ? cid.split(':')[1] || null : null;
 
 /** Newest fills first: [{id, symbol, side, size, price, ts, pnl, copySubId|null, autoClose|null}]. null if Strike can't be read. */
-export async function fills(accountId, { limit = 200, fetch } = {}) {
-  const r = await strikeGet(`/v2/history/fill?account_id=${q(accountId)}&limit=${limit}`, { fetch });
+export async function fills(accountId, { limit = 200, fetch, tries } = {}) {
+  const r = await strikeGet(`/v2/history/fill?account_id=${q(accountId)}&limit=${limit}`, { fetch, tries });
   if (!Array.isArray(r.fills)) return null;
   return r.fills.map(f => ({ id: String(f.id), symbol: f.symbol, side: f.side, size: F(f.size), price: F(f.price), ts: f.timestamp,
     pnl: F(f.realized_pnl || 0), copySubId: tagSub(f.client_order_id), autoClose: f.auto_close_type || null }));

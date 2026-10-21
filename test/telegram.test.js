@@ -16,10 +16,10 @@ test('/watch@CopilotWatchBot parses', () => {
   const c = telegramUpdateToCommand(msg(`/watch@CopilotWatchBot ${ADDR} Sub1`));
   assert.equal(c.name, 'watch'); assert.deepEqual(c.args, [ADDR, 'Sub1']); assert.equal(c.chatId, '42');
 });
-test('group chat gets the decline', async () => {
+test('group chat commands are ignored', async () => {
   const sent = []; const c = ctx();
   await handleTelegram(req(msg('/start', 'group'), 's3cret'), env, c, { send: async (id, t) => sent.push([id, t]) });
-  await Promise.all(c.p); assert.match(sent[0][1], /direct messages only/);
+  await Promise.all(c.p); assert.equal(sent.length, 0);
 });
 test('9,000-char text → 3 chunks under 4,000', () => {
   const t = Array.from({ length: 300 }, () => 'x'.repeat(29)).join('\n');

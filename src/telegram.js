@@ -56,9 +56,10 @@ export async function handleTelegram(req, env, ctx, deps = null) {
   if (!cmd) return new Response('ok');
   const send = deps?.send || ((id, t) => sendTelegram(env, id, t));
   const work = (async () => {
-    if (cmd.decline) return send(cmd.decline, T.dmOnly);
-    if (cmd.plain) return send(cmd.chatId, T.help);
-    const reply = await handleCommand(cmd, deps || makeDeps(env));
+    if (cmd.decline) return; // groups: stay silent (one decline per message would be an amplifier)
+    const d = deps || makeDeps(env);
+    if (cmd.plain) { if (await (d.rateOk ? d.rateOk(`chat:tg:${cmd.chatId}`) : d.store.rateOk(`chat:tg:${cmd.chatId}`))) await send(cmd.chatId, T.help); return; }
+    const reply = await handleCommand(cmd, d);
     await send(cmd.chatId, reply.text);
   })().catch(e => console.log({ telegramError: e?.name || 'error' }));
   ctx.waitUntil(work);

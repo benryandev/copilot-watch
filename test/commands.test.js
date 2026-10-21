@@ -57,3 +57,12 @@ test('global chat cap', async () => {
   const d = setup(); d.store.countChats = async () => 300;
   assert.match((await handleCommand(tg('watch', [ADDR], '77'), d)).text, /at its limit/);
 });
+test('Discord: one user can hold at most 3 channels across servers', async () => {
+  const d = setup();
+  for (const [ch, g] of [['a', 'g1'], ['b', 'g2'], ['c', 'g3']]) await handleCommand({ platform: 'dc', chatId: ch, guildId: g, userId: 'u', name: 'watch', args: [ADDR, 'Sub1'] }, d);
+  assert.match((await handleCommand({ platform: 'dc', chatId: 'd', guildId: 'g4', userId: 'u', name: 'watch', args: [ADDR, 'Sub1'] }, d)).text, /You already have Copilot Watch in 3 channels/);
+});
+test('global distinct-account cap', async () => {
+  const d = setup(); d.store.countAccts = async () => 300;
+  assert.match((await handleCommand(tg('watch', [ADDR], '55'), d)).text, /at its limit/);
+});
