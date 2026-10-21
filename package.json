@@ -1,0 +1,3 @@
+{ "name": "copilot-watch", "private": true, "type": "module", "license": "MIT",
+  "scripts": { "test": "node --test 'test/*.test.js'", "sync-core": "sh scripts/sync-core.sh",
+               "deploy": "pnpm dlx wrangler@4 deploy", "tail": "pnpm dlx wrangler@4 tail" } }

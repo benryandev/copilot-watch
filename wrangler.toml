@@ -1,0 +1,15 @@
+name = "copilot-watch"
+main = "src/worker.js"
+compatibility_date = "2026-10-01"
+workers_dev = true
+
+[[kv_namespaces]]
+binding = "KV"
+id = "22fd6ef1fa074edea7689bdaa2b5378f"
+
+[triggers]
+crons = ["*/2 * * * *"]
+
+[vars]
+DISCORD_APP_ID = "1561719393992319007"
+DISCORD_PUBLIC_KEY = "50e537c588ad61fa8b38b6ced330efecd368c0c74f351ea710808beba8d6cb48"
