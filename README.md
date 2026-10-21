@@ -48,12 +48,13 @@ Public, unauthenticated reads only. Copilot Watch never asks for an API key: Str
 
 ## How it runs
 
-A Cloudflare Worker (`src/worker.js`) with three entry points:
+A Cloudflare Worker (`src/worker.js`) with these entry points:
 
 - `POST /telegram`: Telegram webhook, checked against a secret header (constant-time compare). Direct messages only.
 - `/api/paper`: create and read Paper Copy trials for Copilot Check (CORS limited to strike.benryan.com.au; rate-limited; trials expire after 30 days).
 - `POST /discord`: Discord HTTP interactions, Ed25519 signature and timestamp checked; replies are deferred and then edited, alerts are posted to the channel. Mentions are always disabled and Strike-supplied names are markdown-escaped.
 - A cron every 2 minutes (`src/poll.js`) reads each watched account once and each lead once, however many chats watch them, diffs against the stored baseline, and sends alerts. A lead that Hyperliquid doesn't answer for is skipped for that round, never read as "holds nothing".
+- A daily cron at 22:00 UTC (08:00 Brisbane, `src/paper-daily.js`) sends each chat a one-line summary of its paper copies.
 
 State lives in Workers KV. `core/` (HTTP with backoff, Strike and Hyperliquid clients, market map) is shared with [Copilot Check](https://github.com/benryandev/copilot-check) and copied in by `pnpm sync-core`; a test checks the copy against its hash.
 
@@ -63,7 +64,7 @@ Stored per chat: the Telegram chat id or Discord channel and server ids, the use
 
 ## Limits
 
-- Per chat: 5 accounts, 10 commands a minute. Per Discord server: 3 channels. In total: 300 chats (a prototype limit). Each 2-minute run reads at most ~900 public endpoints; accounts and leads beyond that roll over to the next run. In Discord, the commands that change a watch need Manage Server by default (server admins can widen that in Server Settings → Integrations), and only the person who set a watch or a member with Manage Server can change or stop it. Names taken from Strike are stripped of link and mention characters.
+- Per chat: 5 accounts, 10 commands a minute. Per Discord server: 3 channels; per Discord user: 3 channels. Paper copies: 3 per chat, 500 in total. In total: 300 chats (a prototype limit). Each 2-minute run reads at most ~900 public endpoints; accounts and leads beyond that roll over to the next run. In Discord, the commands that change a watch need Manage Server by default (server admins can widen that in Server Settings → Integrations), and only the person who set a watch or a member with Manage Server can change or stop it. Names taken from Strike are stripped of link and mention characters.
 - Strike's copy list can lag up to 10 minutes, so a brand-new or just-stopped copy can take that long to show.
 - Caps, exclusions and leverage settings aren't public, so a missed-copy alert can only say "likely caps, balance or a leverage lock".
 - Hyperliquid rate-limits by IP and Workers share IPs; a busy round skips the lead rather than guessing.
@@ -93,5 +94,5 @@ Built by [Ben Ryan](https://benryan.com.au).
 - Telegram bot: [@CopilotWatchBot](https://t.me/CopilotWatchBot)
 - Discord application ID: `1561719393992319007`
 - Discord public key: `50e537c588ad61fa8b38b6ced330efecd368c0c74f351ea710808beba8d6cb48` (verifies interaction signatures)
-- Discord test server ("Copilot") guild ID: `1561721893071880303` (for guild-scoped slash commands)
+- Discord test server ("Copilot") guild ID: `1561721893071880303` (slash commands are registered globally; the guild ID is only for testing with `--guild`)
 - Cloudflare: Workers Paid account; KV namespace `copilot-watch` (`22fd6ef1fa074edea7689bdaa2b5378f`); Worker at `copilot-watch.benryan.workers.dev`.
