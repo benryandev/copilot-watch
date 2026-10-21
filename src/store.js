@@ -60,6 +60,14 @@ export function createStore(kv, { now = () => Date.now() } = {}) {
       if (n >= perMin) return false;
       await kv.put(k, String(n + 1), { expirationTtl: 120 }); return true;
     },
+    /** Generic JSON cache: returns the stored value if younger than maxAgeMs, else loads (keeping the old value if the load fails). */
+    async cached(name, maxAgeMs, loader) {
+      const c = await getJ(`cache:${name}`);
+      if (c && now() - c.at < maxAgeMs) return c.v;
+      let v = null; try { v = await loader(); } catch { v = null; }
+      if (v != null) { await putJ(`cache:${name}`, { at: now(), v }); return v; }
+      return c ? c.v : null;
+    },
     /** Strike caches the leaderboard ~10 minutes, so do the same. */
     async cachedLeaderboard(loader, maxAgeMs = 10 * 60 * 1000) {
       const c = await getJ('cache:leaderboard');
