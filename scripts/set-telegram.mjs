@@ -13,6 +13,7 @@ await call('setMyCommands', { commands: [
   { command: 'status', description: 'Open copies and distance to liquidation' },
   { command: 'settings', description: 'Liquidation alert threshold, e.g. liq=5' },
   { command: 'unwatch', description: 'Stop watching one account' },
+  { command: 'paper', description: 'Paper copy a Hyperliquid wallet (no money)' },
   { command: 'stop', description: 'Stop everything and delete this chat\'s data' },
   { command: 'help', description: 'How it works' } ] });
 await call('setMyDescription', { description: 'Alerts for Strike copy traders: a copy near liquidation, a copy the lead already closed, a missed copy, lead stress and withdrawals. Public data only; never asks for a key. Not financial advice. Not affiliated with Strike Finance.' });

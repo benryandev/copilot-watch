@@ -16,6 +16,9 @@ const commands = [
   { name: 'unwatch', description: 'Stop watching one account', options: [{ type: STR, name: 'account', description: 'Its label from /status, or its ID', required: true, max_length: 120 }] },
   { name: 'status', description: 'Open copies and how close each is to liquidation' },
   { name: 'settings', description: 'Alert when a copy is within this % of liquidation', options: [{ type: NUM, name: 'liq', description: '1 to 20 (default 5)', required: true, min_value: 1, max_value: 20 }] },
+  { name: 'paper', description: 'Paper copy a Hyperliquid wallet (no money); no wallet lists this channel\'s paper copies', options: [
+    { type: STR, name: 'wallet', description: 'Hyperliquid wallet, 0x…', required: false, max_length: 60 },
+    { type: NUM, name: 'size', description: 'Paper account size, US$ (default 1000)', required: false, min_value: 10, max_value: 1000000 } ] },
   { name: 'stop', description: 'Stop all watches in this channel and delete its data' },
   { name: 'help', description: 'How Copilot Watch works' },
 ].map(c => ({ ...c, contexts: [0], integration_types: [0] }));

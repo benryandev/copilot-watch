@@ -32,7 +32,7 @@ const json = (v, status = 200) => new Response(JSON.stringify(v), { status, head
 export function interactionToCommand(i) {
   const opt = Object.fromEntries((i.data?.options || []).map(o => [o.name, o.value]));
   const name = i.data?.name;
-  const args = name === 'watch' ? [opt.account, opt.sub] : name === 'unwatch' ? [opt.account] : name === 'settings' ? [`liq=${opt.liq}`] : [];
+  const args = name === 'watch' ? [opt.account, opt.sub] : name === 'unwatch' ? [opt.account] : name === 'settings' ? [`liq=${opt.liq}`] : name === 'paper' ? [opt.wallet, opt.size] : [];
   const perms = BigInt(i.member?.permissions || '0');
   return { platform: 'dc', chatId: String(i.channel_id || i.channel?.id), guildId: i.guild_id ? String(i.guild_id) : null,
     userId: String(i.member?.user?.id || i.user?.id || ''), isAdmin: (perms & MANAGE_GUILD) !== 0n, name, args: args.filter(a => a != null).map(String) };

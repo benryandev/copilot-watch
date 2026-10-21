@@ -9,7 +9,7 @@ binding = "KV"
 id = "22fd6ef1fa074edea7689bdaa2b5378f"
 
 [triggers]
-crons = ["*/2 * * * *"]
+crons = ["*/2 * * * *", "0 22 * * *"]
 
 [vars]
 DISCORD_APP_ID = "1561719393992319007"

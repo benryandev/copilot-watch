@@ -2,6 +2,7 @@
 import { T } from './text.js';
 import { resolveWatchTarget } from './resolve.js';
 import { chatKey } from './store.js';
+import { parseTrial, createTrial, getTrial, MAX_PER_CHAT, PAGE } from './paper.js';
 
 export const MAX_ACCOUNTS = 5, MAX_CHANNELS_PER_GUILD = 3, MAX_CHATS = 300;
 
@@ -88,9 +89,30 @@ export async function handleCommand(cmd, deps) {
       return { text: T.settingsOk(n) };
     }
 
+    case 'paper': {
+      const kv = deps.kv || deps.env?.KV;
+      if (chat && !canChange(cmd, chat)) return { text: T.notOwner, ephemeral: true };
+      const live = [];
+      for (const id of chat?.trials || []) { const t = await getTrial(kv, id); if (t) live.push(t); }
+      if (!args.length) return { text: live.length ? [T.paperList, ...live.map(t => T.paperItem(t, PAGE + t.id))].join('\n') : T.paperHelp };
+      if (live.length >= MAX_PER_CHAT) return { text: T.paperMax };
+      const sizeArg = args[1] ? Number(String(args[1]).replace(/[$,]/g, '')) : 1000;
+      if (!(sizeArg >= 10 && sizeArg <= 1_000_000)) return { text: T.paperHelp };
+      const p = parseTrial({ lead: args[0], settings: { mode: 'fm', amount: Math.max(1, Math.round(sizeArg / 20)), lev: 5, marginMode: 'isolated', start: sizeArg } }, now());
+      if (!p.ok) return { text: p.error === 'bad_wallet' ? T.paperBadWallet : T.paperHelp };
+      const r = await createTrial(kv, p.trial, { chat: key });
+      if (r.error) return { text: T.paperFull };
+      const next = chat || { platform: cmd.platform, chatId: cmd.chatId, guildId: cmd.guildId || null, ownerUserId: cmd.userId, accounts: [], settings: { liq: 5 }, createdAt: now() };
+      next.trials = [...live.map(t => t.id), r.id];
+      await store.putChat(next);
+      return { text: T.paperMade(p.trial, r.url) };
+    }
+
     case 'stop': {
       if (!chat) return { text: T.stopped };
       if (!canChange(cmd, chat)) return { text: T.notOwner, ephemeral: true };
+      const kv = deps.kv || deps.env?.KV;
+      for (const id of chat.trials || []) if (kv) await kv.delete(`paper:${id}`);
       await store.deleteChat(key);
       return { text: T.stopped };
     }

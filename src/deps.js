@@ -27,5 +27,5 @@ export function makeDeps(env) {
   };
   // Cloudflare's rate limiting binding when deployed; the KV counter is only a fallback (it races under bursts).
   const rateOk = env.CMD_LIMITER ? async key => (await env.CMD_LIMITER.limit({ key })).success : null;
-  return { store, strike, hl, env, rateOk };
+  return { store, strike, hl, env, rateOk, kv: env.KV };
 }
