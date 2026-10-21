@@ -53,7 +53,7 @@ test('A3 waits 10 minutes and matches only its own subscription tag', () => {
   assert.equal(run(snap(), cur(), { [L]: leadState([], { fills: [f(9)] }) }).filter(a => a.kind === 'A3').length, 0);
   const other = [{ id: 'x', symbol: 'BTC-USD', ts: NOW - 10.5 * 60000, copySubId: 'other-sub' }];
   const a = run(snap(), cur(null, other), { [L]: leadState([], { fills: [f(11)] }) }).filter(a => a.kind === 'A3');
-  assert.equal(a.length, 1); assert.equal(a[0].key, `A3:${L}:9`); assert.match(a[0].text, /BTC long/);
+  assert.equal(a.length, 1); assert.equal(a[0].key, `A3:${L}:BTC-USD:${Math.floor((NOW - 11 * 60000) / 3600000)}`); assert.match(a[0].text, /BTC long/);
   const mine = [{ id: 'y', symbol: 'BTC-USD', ts: NOW - 10.5 * 60000, copySubId: 's1' }];
   assert.equal(run(snap(), cur(null, mine), { [L]: leadState([], { fills: [f(11)] }) }).filter(a => a.kind === 'A3').length, 0);
 });
@@ -85,4 +85,9 @@ test('history before baseline never alerts', () => {
 });
 test('no Strike data this round → no A1/A3/A6', () => {
   assert.deepEqual(run(snap(), snap({ copies: null, fills: null })), []);
+});
+
+test('A3 at most once per market per hour', () => {
+  const fl = [0, 1, 2].map(i => ({ coin: 'BTC', dir: 'Open Long', time: NOW - (12 + i) * 60000, oid: 100 + i }));
+  assert.equal(run(snap(), snap(), { [L]: leadState([], { fills: fl }) }).filter(a => a.kind === 'A3').length, 1);
 });

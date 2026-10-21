@@ -83,14 +83,15 @@ export function detectAlerts(prev, cur, settings, { leads = {}, mk = {}, now = D
     if (sub.status !== 'active') continue;
     const lead = leads[leadId]; if (!lead) continue;
     const subIds = new Set((cur.copies || []).filter(c => c.leadId === leadId && c.subId).map(c => c.subId));
-    const seen = new Set();
+    const seen = new Set(), said = new Set();
     for (const f of lead.fills || []) {
       const sym = to[f.coin];
       if (!sym || !opens(f) || seen.has(f.oid)) continue;
       if (f.time <= since || f.time < (sub.since || 0) || now - f.time < 10 * MIN) continue;
       seen.add(f.oid);
       const hit = copyFills.some(x => x.symbol === sym && x.ts >= f.time - MIN && x.ts <= f.time + 10 * MIN && (!subIds.size || subIds.has(x.copySubId)));
-      if (!hit) add('A3', `${leadId}:${f.oid}`, A.A3(label, leadId, sym, openSide(f)));
+      const hk = `${sym}:${Math.floor(f.time / 3_600_000)}`;
+      if (!hit && !said.has(hk)) { said.add(hk); add('A3', `${leadId}:${hk}`, A.A3(label, leadId, sym, openSide(f))); } // at most one per market per hour
     }
   }
 
