@@ -1,0 +1,73 @@
+// All user-facing wording, platform-neutral plain text. Alerts state what happened and the plain options; never "do this".
+
+export const DISCLAIMER = 'Not financial advice. Not affiliated with Strike Finance.';
+export const short = a => (a && a.length > 14 ? `${a.slice(0, 6)}…${a.slice(-4)}` : a || '?');
+export const usd = (n, sign = false) => {
+  const v = Math.round(Number(n) || 0), s = Math.abs(v).toLocaleString('en-US');
+  return `${v < 0 ? '−' : sign && v > 0 ? '+' : ''}$${s}`;
+};
+export const pct = n => `${(Math.round(n * 10) / 10).toFixed(1)}%`;
+export const day = ts => new Date(ts).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+export const mkt = sym => (sym || '').replace(/-USD$/, '');
+
+export const T = {
+  start: 'Copilot Watch sends alerts about Strike copy trades. It reads public data only and never asks for a key.\n\n' +
+    'Send /watch with a Strike address (addr1…), a nickname or a sub-account ID. Add a sub-account name after an address to watch only that one, e.g. /watch addr1… Sub1.\n\n' +
+    'Alerts: a copy near liquidation, a copy the lead has already closed, a lead trade that wasn\'t copied, a lead using most of their margin, a lead withdrawing most of their funds, and a copy closed by liquidation.\n\n' +
+    'Commands: /status, /settings liq=5, /unwatch <account>, /stop.\n\n' +
+    'Stored: this chat\'s id, the accounts you watch and the last fills seen. /stop deletes all of it. ' + DISCLAIMER,
+  help: 'Commands:\n/watch <addr1, nickname or sub-account ID> [sub-account name]\n/status: open copies and how close each is to liquidation\n/settings liq=5: alert when a copy is within this % of liquidation (1 to 20)\n/unwatch <account>: stop watching one account\n/stop: stop everything and delete this chat\'s data\n\nSub-account IDs: Strike app, Sub-accounts page, Account ID column, copy button.',
+  dmOnly: 'Copilot Watch works in direct messages only. Open a chat with the bot and send /start.',
+  rate: 'Too many commands, try again in a minute.',
+  badInput: 'That doesn\'t look like a Strike address (addr1…), nickname or account ID. Send /help for examples.',
+  hlAddr: 'That is a Hyperliquid wallet. /watch takes the Strike account that copies it: its address (addr1…), nickname or sub-account ID.',
+  notFound: 'No Strike account found for that. Check the spelling, or use the address (addr1…) or the account ID from the Sub-accounts page.',
+  ambiguousSub: 'Two sub-accounts share that name. Copy the sub-account\'s Account ID from Strike\'s Sub-accounts page and use /watch <id>.',
+  subNotFound: names => `No active sub-account with that name. Sub-accounts on this address: ${names.length ? names.join(', ') : 'none'}.`,
+  tooMany: 'This chat already watches 5 accounts. Use /unwatch <account> first.',
+  tooManyChannels: 'This server already has Copilot Watch in 3 channels. Use /stop in one of them first.',
+  strikeDown: 'Couldn\'t reach Strike just now. Try again in a minute.',
+  notOwner: 'Only the person who set up this watch, or a member with Manage Server, can change it.',
+  nothingWatched: 'No accounts watched here yet. Send /watch with a Strike address, nickname or sub-account ID.',
+  stopped: 'Stopped. This chat\'s watches and stored data are deleted.',
+  unwatched: label => `Stopped watching ${label}.`,
+  unwatchNone: 'That account isn\'t watched here. /status lists what is.',
+  settingsBad: 'Use /settings liq=5 (a whole number from 1 to 20). Alerts fire when a copy is within that % of its liquidation price.',
+  settingsOk: n => `Liquidation alerts now fire within ${n}% of the liquidation price (and again at 2%).`,
+  watchHead: 'Watching:',
+  watchLine: (label, subs, open) => subs.length
+    ? `${label}: ${subs.map(s => `copying ${short(s.leadId)} (${s.mode} ${usd(s.amount)})`).join('; ')}, ${open} open ${open === 1 ? 'copy' : 'copies'}.`
+    : `${label}: no active copies yet; the copy list can lag up to 10 minutes.`,
+  watchTail: 'Alerts cover changes from now on, checked about every 2 minutes. /status shows the open copies.',
+  statusHead: label => `${label}`,
+  statusNone: 'no open copies.',
+  statusLine: p => `${mkt(p.market)} ${p.side} ${p.leverage}x: P&L ${usd(p.pnl, true)}, ${p.dist == null ? 'no liquidation price' : `${pct(p.dist)} from liquidation`}${p.leadId ? `, lead ${short(p.leadId)}` : ''}`,
+  statusTail: liq => `Liquidation alerts at ${liq}% and 2%. Data from Strike's public API; the copy list can lag up to 10 minutes.`,
+};
+
+const OFF_HOURS = 'Stock and commodity prices pause outside market hours, so the next open can gap.';
+
+/** Alert wording. Each takes the facts and returns plain text. */
+export const A = {
+  A1: (label, c, dist, offHours) =>
+    `⚠️ ${label}: the ${mkt(c.market)} ${c.side} copy is ${pct(dist)} from liquidation (mark ${c.mark}, liquidation ${c.liq}). ` +
+    `Options: add margin to this position in Strike, reduce it, or leave it.${offHours ? ' ' + OFF_HOURS : ''}`,
+  A2: (label, c, why) =>
+    `${label}: the ${mkt(c.market)} ${c.side} copy is still open, but the lead ${short(c.leadId)} ${why}. ` +
+    'Strike doesn\'t always close a copy the lead has left. Options: close it in Strike, or keep it as your own position.',
+  A2liq: (label, c) =>
+    `${label}: the lead ${short(c.leadId)} was liquidated on ${mkt(c.market)}. Check whether this copy closed; it still shows open.`,
+  A3: (label, leadId, sym, side) =>
+    `${label}: the lead ${short(leadId)} opened or added a ${mkt(sym)} ${side} more than 10 minutes ago and this account has no copy fill for it (likely caps, balance or a leverage lock). ` +
+    'Options: check the copy settings in Strike, or leave it.',
+  A4: (leadId, dex, used) =>
+    `The lead ${short(leadId)} is using ${pct(used * 100)} of their margin on Hyperliquid${dex === 'xyz' ? ' (stocks and commodities)' : ''}. ` +
+    'A drop from here can force their closes, which copies then follow or miss.',
+  A5: (leadId, out, before) =>
+    `The lead ${short(leadId)} moved ${usd(out)} out of their Hyperliquid account in the last day (it held about ${usd(before)}). ` +
+    'With fixed ratio, copy sizes follow the lead\'s equity, so later copies can change size.',
+  A6fill: (label, f, kind) =>
+    `${label}: a ${mkt(f.symbol)} copy was closed by ${kind === 'adl' ? 'auto-deleverage (ADL)' : 'liquidation'} (${day(f.ts)}${f.pnl ? `, P&L ${usd(f.pnl, true)}` : ''}).`,
+  A6sub: (label, leadId, status) =>
+    `${label}: the copy of ${short(leadId)} is now ${status} on Strike's copy list.`,
+};
