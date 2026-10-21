@@ -53,6 +53,9 @@ export function createStore(kv, { now = () => Date.now() } = {}) {
       if (await kv.get(k)) return false;
       await kv.put(k, '1', { expirationTtl: Math.max(60, ttlSec) }); return true;
     },
+    /** Alerts that couldn't be delivered, kept for an hour and resent on the next poll. */
+    getPending: key => getJ(`pending:${key}`),
+    putPending: (key, alerts) => alerts.length ? putJ(`pending:${key}`, alerts, { expirationTtl: 3600 }) : kv.delete(`pending:${key}`),
     /** Per-chat command limit per minute. */
     async rateOk(key, perMin = 10) {
       const k = `rate:${key}:${Math.floor(now() / 60000)}`;

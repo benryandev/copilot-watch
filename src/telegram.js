@@ -43,6 +43,7 @@ export async function sendTelegram(env, chatId, text, { fetch = globalThis.fetch
     const r = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_TOKEN}/sendMessage`, {
       method: 'POST', headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ chat_id: chatId, text: part, disable_web_page_preview: true }) });
+    if (r.status === 403 || (r.status === 400 && /chat not found/i.test(await r.text().catch(() => '')))) return 'gone'; // blocked or deleted
     ok = ok && r.ok;
   }
   return ok;

@@ -65,3 +65,23 @@ test('no chats → no API calls', async () => {
   const r = await poll({}, { store, strike: new Proxy({}, { get: () => () => { calls++; } }), hl: {}, send: async () => true });
   assert.equal(r.accounts, 0); assert.equal(calls, 0);
 });
+
+test('a failed send is retried on the next poll', async () => {
+  const { deps, sent, state } = await setup();
+  await poll({}, deps);
+  state.fills = [{ id: 'n1', symbol: 'BTC-USD', ts: NOW + 1, autoClose: 'liquidation', pnl: -5 }];
+  let fail = true; const ok = deps.send; deps.send = async (c, t) => (fail ? false : ok(c, t));
+  deps.now = () => NOW + 120_000; const r = await poll({}, deps);
+  assert.equal(r.sent, 0); assert.equal(r.failed, 2);
+  fail = false; deps.now = () => NOW + 240_000; await poll({}, deps);
+  assert.equal(sent.length, 2);
+});
+
+test('a chat that blocked the bot is removed', async () => {
+  const { deps, state, store } = await setup();
+  await poll({}, deps);
+  state.fills = [{ id: 'n1', symbol: 'BTC-USD', ts: NOW + 1, autoClose: 'liquidation', pnl: -5 }];
+  deps.send = async c => (c.chatId === '1' ? 'gone' : true);
+  deps.now = () => NOW + 120_000; const r = await poll({}, deps);
+  assert.equal(r.removed, 1); assert.equal(await store.getChat('chat:tg:1'), null); assert.ok(await store.getChat('chat:tg:2'));
+});

@@ -70,6 +70,7 @@ export async function postDiscord(env, channelId, text, { fetch = globalThis.fet
     const r = await fetch(`${API}/channels/${channelId}/messages`, { method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bot ${env.DISCORD_TOKEN}` },
       body: JSON.stringify({ content: p, allowed_mentions: NO_MENTIONS, flags: SUPPRESS_EMBEDS }) });
+    if (r.status === 403 || r.status === 404) return 'gone'; // bot removed or channel deleted
     ok = ok && r.ok;
   }
   return ok;

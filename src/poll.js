@@ -101,9 +101,19 @@ export async function poll(env, deps = null) {
     for (const [l, s] of Object.entries(base.subs)) if (s.status !== 'active' && !c.subs[l]) delete base.subs[l];
     await d.store.putAcct(id, { chats: a.chats.map(ch => `chat:${ch.platform}:${ch.chatId}`), base });
   }
-  for (const { chat, texts: als } of outbox.values()) {
-    const texts = als.sort((x, y) => PRIORITY[x.kind] - PRIORITY[y.kind]).map(a => a.text);
-    try { if (await d.send(chat, texts.slice(0, 10).join('\n\n'))) res.sent += Math.min(texts.length, 10); } catch { /* next alert retries after its cool-down */ }
+  for (const c of chats) { // undelivered alerts from earlier polls go out first
+    const key = `chat:${c.platform}:${c.chatId}`, p = await d.store.getPending(key);
+    if (!p?.length) continue;
+    if (!outbox.has(key)) outbox.set(key, { chat: c, texts: [] });
+    outbox.get(key).texts.unshift(...p); outbox.get(key).hadPending = true;
+  }
+  for (const [key, { chat, texts: als, hadPending }] of outbox) {
+    const batch = als.sort((x, y) => PRIORITY[x.kind] - PRIORITY[y.kind]).slice(0, 10);
+    let ok = false;
+    try { ok = await d.send(chat, batch.map(a => a.text).join('\n\n')); } catch { ok = false; }
+    if (ok === 'gone') { await d.store.deleteChat(key); await d.store.putPending(key, []); res.removed = (res.removed || 0) + 1; continue; }
+    if (ok) { res.sent += batch.length; if (hadPending) await d.store.putPending(key, []); }
+    else { res.failed = (res.failed || 0) + 1; await d.store.putPending(key, batch.map(({ kind, key: k, text }) => ({ kind, key: k, text }))); }
   }
   console.log(res);
   return res;
