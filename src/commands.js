@@ -68,7 +68,9 @@ export async function handleCommand(cmd, deps) {
       for (const a of chat.accounts) {
         const pos = await strike.copyPositions(a.accountId).catch(() => null);
         out.push(`${T.statusHead(a.label)}${pos === null ? `: ${T.strikeDown}` : pos.length ? '' : `: ${T.statusNone}`}`);
-        for (const p of pos || []) out.push('  ' + T.statusLine({ ...p, dist: p.liq && p.mark ? Math.abs(p.mark - p.liq) / p.mark * 100 : null }));
+        const rows = (pos || []).map(p => ({ ...p, dist: p.liq && p.mark ? Math.abs(p.mark - p.liq) / p.mark * 100 : null }));
+        rows.sort((x, y) => (x.dist ?? 1e9) - (y.dist ?? 1e9)); // nearest to liquidation first
+        for (const p of rows) out.push('  ' + T.statusLine(p));
       }
       out.push('', T.statusTail(chat.settings?.liq ?? 5));
       return { text: out.join('\n') };
