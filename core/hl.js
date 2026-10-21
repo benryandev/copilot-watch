@@ -27,7 +27,7 @@ const dexState = st => ({
   withdrawable: F(st.withdrawable || 0),
   positions: (st.assetPositions || []).map(({ position: p }) => ({
     coin: p.coin, szi: F(p.szi), entry: F(p.entryPx || 0), liqPx: p.liquidationPx == null ? null : F(p.liquidationPx),
-    lev: F(p.leverage?.value || 0), levType: p.leverage?.type || null, value: F(p.positionValue || 0) })),
+    lev: F(p.leverage?.value || 0), levType: p.leverage?.type || null, value: F(p.positionValue || 0), upnl: F(p.unrealizedPnl || 0) })),
 });
 
 /** Both dexes: {main, xyz}, each {accountValue, marginUsed, positions: [{coin, szi, liqPx, lev}]}. xyz coins carry the "xyz:" prefix. */
