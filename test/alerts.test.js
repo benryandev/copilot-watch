@@ -5,7 +5,7 @@ const L = '0xlead000000000000000000000000000000000001';
 const mk = { 'BTC-USD': { hl: 'BTC', tiers: [[1e18, 10, 0.025, 0]] }, 'XAU-USD': { hl: 'xyz:GOLD', tiers: [[1e18, 10, 0.025, 0]] }, 'NIGHT-USD': { hl: null, tiers: [[1e18, 10, 0.025, 0]] } };
 const NOW = Date.UTC(2026, 9, 22, 3, 0);
 const copy = (market, side, o = {}) => ({ subId: 's1', leadId: L, market, side, mark: 100, liq: 50, ...o });
-const leadState = (positions = [], o = {}) => ({ ch: { main: { accountValue: 1000, marginUsed: 100, positions: positions.filter(p => !p.coin.startsWith('xyz:')) }, xyz: { accountValue: 0, marginUsed: 0, positions: positions.filter(p => p.coin.startsWith('xyz:')) } }, fills: [], withdrawn24h: 0, accountValue: 1000, ...o });
+const leadState = (positions = [], o = {}) => ({ ch: { main: { accountValue: 1000, marginUsed: 100, maintUsed: 10, positions: positions.filter(p => !p.coin.startsWith('xyz:')) }, xyz: { accountValue: 0, marginUsed: 0, positions: positions.filter(p => p.coin.startsWith('xyz:')) } }, fills: [], withdrawn24h: 0, accountValue: 1000, ...o });
 const snap = (o = {}) => ({ accountId: 'acc', label: 'Sub1', at: NOW, since: NOW - 3600_000, copies: [], subs: { [L]: { status: 'active' } }, fills: [], orphans: [], ...o });
 const run = (prev, cur, leads = {}, liq = 5) => detectAlerts(prev, cur, { liq }, { leads, mk, now: NOW });
 
@@ -21,7 +21,7 @@ test('A1 fires at 5% and again at 2%, not at 6%', () => {
   assert.deepEqual(keys(98.5), ['A1:s1:BTC-USD:long:5', 'A1:s1:BTC-USD:long:2']);
   assert.deepEqual(keys(94), []);
   const short = run(snap(), snap({ copies: [copy('BTC-USD', 'short', { liq: 104 })] })).filter(a => a.kind === 'A1');
-  assert.equal(short.length, 1); assert.match(short[0].text, /4\.0% from liquidation/);
+  assert.equal(short.length, 1); assert.match(short[0].text, /4\.0% from liquidation \(mark 100, liquidation 104\)/);
 });
 test('A1 on a stock/commodity mentions market hours', () => {
   const a = run(snap(), snap({ copies: [copy('XAU-USD', 'long', { liq: 97 })] })).find(a => a.kind === 'A1');
@@ -63,8 +63,10 @@ test('A3 ignores closes, unlisted coins and fills before the baseline', () => {
   assert.equal(run(snap(), snap(), { [L]: leadState([], { fills: lf }) }).filter(a => a.kind === 'A3').length, 0);
 });
 test('A4 margin stress and A5 withdrawal', () => {
-  const stressed = leadState([], { ch: { main: { accountValue: 1000, marginUsed: 950, positions: [] }, xyz: { accountValue: 0, marginUsed: 0, positions: [] } } });
-  assert.match(run(snap(), snap(), { [L]: stressed }).find(a => a.kind === 'A4').text, /95\.0% of their margin/);
+  const busy = leadState([], { ch: { main: { accountValue: 1000, marginUsed: 1000, maintUsed: 590, positions: [] }, xyz: { accountValue: 0, marginUsed: 0, positions: [] } } });
+  assert.equal(run(snap(), snap(), { [L]: busy }).filter(a => a.kind === 'A4').length, 0);
+  const stressed = leadState([], { ch: { main: { accountValue: 1000, marginUsed: 1000, maintUsed: 600, positions: [] }, xyz: { accountValue: 0, marginUsed: 0, positions: [] } } });
+  assert.match(run(snap(), snap(), { [L]: stressed }).find(a => a.kind === 'A4').text, /maintenance margin is 60\.0% of account value/);
   assert.equal(run(snap(), snap(), { [L]: leadState([], { withdrawn24h: 400, accountValue: 600 }) }).filter(a => a.kind === 'A5').length, 0);
   assert.match(run(snap(), snap(), { [L]: leadState([], { withdrawn24h: 700, accountValue: 300 }) }).find(a => a.kind === 'A5').text, /moved \$700 out/);
 });

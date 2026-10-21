@@ -1,6 +1,6 @@
 // The 2-minute cron: read public Strike and Hyperliquid data for every watched account, diff against the stored
 // baseline, send new alerts. The first poll for an account only stores its baseline. Logs carry counts only.
-import { detectAlerts, findOrphans } from './alerts.js';
+import { detectAlerts, findOrphans, PRIORITY } from './alerts.js';
 import { buildMarkets } from '../core/markets.js';
 import { HlBusyError } from '../core/http.js';
 import { makeDeps } from './deps.js';
@@ -93,7 +93,7 @@ export async function poll(env, deps = null) {
       for (const al of detectAlerts(prev, c, chat.settings, { leads, mk, now })) {
         if (!(await d.store.coolOnce(key, al.key, al.ttl))) continue;
         if (!outbox.has(key)) outbox.set(key, { chat, texts: [] });
-        outbox.get(key).texts.push(al.text);
+        outbox.get(key).texts.push(al);
       }
     }
     // keep last round's data where Strike didn't answer, so a blip never resets the baseline
@@ -101,7 +101,8 @@ export async function poll(env, deps = null) {
     for (const [l, s] of Object.entries(base.subs)) if (s.status !== 'active' && !c.subs[l]) delete base.subs[l];
     await d.store.putAcct(id, { chats: a.chats.map(ch => `chat:${ch.platform}:${ch.chatId}`), base });
   }
-  for (const { chat, texts } of outbox.values()) {
+  for (const { chat, texts: als } of outbox.values()) {
+    const texts = als.sort((x, y) => PRIORITY[x.kind] - PRIORITY[y.kind]).map(a => a.text);
     try { if (await d.send(chat, texts.slice(0, 10).join('\n\n'))) res.sent += Math.min(texts.length, 10); } catch { /* next alert retries after its cool-down */ }
   }
   console.log(res);

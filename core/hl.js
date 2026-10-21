@@ -23,6 +23,7 @@ export async function fillsByTime(user, t0, t1, { maxPages = 10, onPage = null, 
 const dexState = st => ({
   accountValue: F(st.marginSummary?.accountValue || 0),
   marginUsed: F(st.marginSummary?.totalMarginUsed || 0),
+  maintUsed: F(st.crossMaintenanceMarginUsed || 0), // Hyperliquid liquidates cross positions when account value falls to this
   withdrawable: F(st.withdrawable || 0),
   positions: (st.assetPositions || []).map(({ position: p }) => ({
     coin: p.coin, szi: F(p.szi), entry: F(p.entryPx || 0), liqPx: p.liquidationPx == null ? null : F(p.liquidationPx),

@@ -11,6 +11,9 @@ import { A } from './text.js';
 import { hlMap, isOffHours } from '../core/markets.js';
 
 export const COOL = { A1: 6 * 3600, default: 24 * 3600 };
+export const A4_RATIO = 0.6;
+/** Message order: most urgent first. */
+export const PRIORITY = { A1: 0, A6: 1, A2: 2, A3: 3, A4: 4, A5: 5 };
 const MIN = 60_000;
 const ymd = t => new Date(t).toISOString().slice(0, 10);
 
@@ -91,12 +94,12 @@ export function detectAlerts(prev, cur, settings, { leads = {}, mk = {}, now = D
     }
   }
 
-  // A4: lead using >= 90% of margin on either dex
+  // A4: lead close to liquidation on either dex (cross maintenance margin >= 60% of account value)
   for (const leadId of Object.keys(cur.subs || {})) {
     const lead = leads[leadId]; if (!lead) continue;
     for (const dex of ['main', 'xyz']) {
       const d = lead.ch?.[dex];
-      if (d && d.accountValue > 0 && d.marginUsed / d.accountValue >= 0.9) add('A4', `${leadId}:${dex}:${ymd(now)}`, A.A4(leadId, dex, d.marginUsed / d.accountValue));
+      if (d && d.accountValue > 0 && d.maintUsed / d.accountValue >= A4_RATIO) add('A4', `${leadId}:${dex}:${ymd(now)}`, A.A4(leadId, dex, d.maintUsed / d.accountValue));
     }
     // A5: more than half the perp account withdrawn in 24 h
     const before = (lead.accountValue || 0) + (lead.withdrawn24h || 0);

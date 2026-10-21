@@ -8,6 +8,8 @@ export const usd = (n, sign = false) => {
 };
 export const pct = n => `${(Math.round(n * 10) / 10).toFixed(1)}%`;
 export const day = ts => new Date(ts).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', timeZone: 'UTC' });
+/** A price at 5 significant figures (386.58, 0.00012345). */
+export const px = n => { const v = Number(n); return Number.isFinite(v) ? String(Number(v.toPrecision(5))) : '?'; };
 export const mkt = sym => (sym || '').replace(/-USD$/, '');
 
 export const T = {
@@ -50,7 +52,7 @@ const OFF_HOURS = 'Stock and commodity prices pause outside market hours, so the
 /** Alert wording. Each takes the facts and returns plain text. */
 export const A = {
   A1: (label, c, dist, offHours) =>
-    `⚠️ ${label}: the ${mkt(c.market)} ${c.side} copy is ${pct(dist)} from liquidation (mark ${c.mark}, liquidation ${c.liq}). ` +
+    `⚠️ ${label}: the ${mkt(c.market)} ${c.side} copy is ${pct(dist)} from liquidation (mark ${px(c.mark)}, liquidation ${px(c.liq)}). ` +
     `Options: add margin to this position in Strike, reduce it, or leave it.${offHours ? ' ' + OFF_HOURS : ''}`,
   A2: (label, c, why) =>
     `${label}: the ${mkt(c.market)} ${c.side} copy is still open, but the lead ${short(c.leadId)} ${why}. ` +
@@ -60,9 +62,9 @@ export const A = {
   A3: (label, leadId, sym, side) =>
     `${label}: the lead ${short(leadId)} opened or added a ${mkt(sym)} ${side} more than 10 minutes ago and this account has no copy fill for it (likely caps, balance or a leverage lock). ` +
     'Options: check the copy settings in Strike, or leave it.',
-  A4: (leadId, dex, used) =>
-    `The lead ${short(leadId)} is using ${pct(used * 100)} of their margin on Hyperliquid${dex === 'xyz' ? ' (stocks and commodities)' : ''}. ` +
-    'A drop from here can force their closes, which copies then follow or miss.',
+  A4: (leadId, dex, ratio) =>
+    `The lead ${short(leadId)} is close to liquidation on Hyperliquid${dex === 'xyz' ? ' (stocks and commodities)' : ''}: maintenance margin is ${pct(ratio * 100)} of account value, and Hyperliquid liquidates at 100%. ` +
+    'If they are liquidated, copies of those positions may stay open.',
   A5: (leadId, out, before) =>
     `The lead ${short(leadId)} moved ${usd(out)} out of their Hyperliquid account in the last day (it held about ${usd(before)}). ` +
     'With fixed ratio, copy sizes follow the lead\'s equity, so later copies can change size.',
