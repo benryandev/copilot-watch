@@ -75,8 +75,9 @@ export const frSize = (amount, equity, mult = 1, minEntry = 0) => (q, px, t) => 
  * @param {number} [a.tcap] max total margin (0 = none)
  * @param {Set<string>} [a.excluded] Strike symbols not copied
  * @param {'isolated'|'cross'} [a.marginMode]
+ * @param {object[]|null} [a.log] if given, every copy event is pushed here: {t, sym, kind: 'open'|'add'|'close'|'skip'|'liq', why?, px, q?, pnl?}
  */
-export function replay({ orders, marks, start, size, lev, fee, cap = 0, tcap = 0, excluded = new Set(), mk, marginMode = 'isolated' }) {
+export function replay({ orders, marks, start, size, lev, fee, cap = 0, tcap = 0, excluded = new Set(), mk, marginMode = 'isolated', log = null }) {
   // Plain objects keyed by Strike symbol keep insertion order, like Copilot's defaultdicts; `g` is a defaultdict read.
   const lp = {}, cq = {}, ce = {}, mg = {}, lots = {}, symPk = {}, last = {}, n = {};
   const g = (o, k) => (k in o ? o[k] : (o[k] = 0));
@@ -92,10 +93,11 @@ export function replay({ orders, marks, start, size, lev, fee, cap = 0, tcap = 0
   const liquidate = (c, px, t) => {
     const pnl = marginMode === 'isolated' ? -mg[c] : cq[c] * (px - ce[c]);
     cash += pnl; realised += pnl; liqLoss -= pnl; liqs.push([c, day(t), Math.round(-pnl)]);
+    log?.push({ t, sym: c, kind: 'liq', px, pnl });
     cq[c] = 0; mg[c] = 0; lots[c] = 0;
   };
 
-  const tryOpen = (c, add, px) => {
+  const tryOpen = (c, add, px, t) => {
     if (!add) return false;
     const m = k => Math.abs(g(cq, k)) * g(ce, k) / lev;
     const need = Math.abs(add) * px / lev;
@@ -104,11 +106,13 @@ export function replay({ orders, marks, start, size, lev, fee, cap = 0, tcap = 0
     else if (Math.abs(add) * px < mk[c].minNotional) why = 'tiny';
     else if ((cap && m(c) + need > cap) || (tcap && live().reduce((s, k) => s + m(k), 0) + need > tcap)) why = 'capped';
     else if (eqf() - usedf() < need) why = 'no_margin';
-    if (why) { n[why] = (n[why] || 0) + 1; return false; }
+    if (why) { n[why] = (n[why] || 0) + 1; log?.push({ t, sym: c, kind: 'skip', why, px, q: add }); return false; }
+    const wasOpen = !!g(cq, c);
     ce[c] = g(cq, c) + add ? (g(ce, c) * cq[c] + add * px) / (cq[c] + add) : px;
     cq[c] += add; mg[c] = g(mg, c) + Math.abs(add) * px / levc(c);
     cash -= Math.abs(add) * px * fee; fees += Math.abs(add) * px * fee; vol += Math.abs(add) * px;
     n.taken = (n.taken || 0) + 1; lots[c] = g(lots, c) + 1;
+    log?.push({ t, sym: c, kind: wasOpen ? 'add' : 'open', px, q: add });
     return true;
   };
 
@@ -135,20 +139,21 @@ export function replay({ orders, marks, start, size, lev, fee, cap = 0, tcap = 0
       if (!q) continue;
       const px = o.n / Math.abs(q); last[c] = px; lp[c] = o.sp;
       if (lp[c] === 0 || lp[c] * q > 0) {  // open or add
-        tryOpen(c, size(q, px, t), px); lp[c] += q;
+        tryOpen(c, size(q, px, t), px, t); lp[c] += q;
       } else {  // reduce / close / flip: close the same fraction of the copy
         const frac = Math.min(Math.abs(q) / Math.abs(lp[c]), 1);
         if (g(cq, c)) {
           const side = cq[c] > 0 ? 1 : -1, cl = cq[c] * frac, xp = px * (1 - SLIP * side);
           const pnl = cl * (xp - ce[c]) - Math.abs(cl) * xp * fee;
           cash += pnl; realised += pnl; fees += Math.abs(cl) * xp * fee; vol += Math.abs(cl) * xp; cq[c] -= cl; mg[c] = g(mg, c) * (1 - frac);
+          log?.push({ t, sym: c, kind: 'close', px: xp, q: -cl, pnl });
         }
         const rem = Math.abs(q) > Math.abs(lp[c]) ? q + lp[c] : 0;
         lp[c] = !rem ? lp[c] + q : 0;
         if (Math.abs(lp[c]) < 1e-12) { lp[c] = 0; cq[c] = 0; lots[c] = 0; mg[c] = 0; }
         if (rem) {
           cq[c] = 0; lots[c] = 0; mg[c] = 0;
-          tryOpen(c, size(rem, px, t), px); lp[c] = rem;
+          tryOpen(c, size(rem, px, t), px, t); lp[c] = rem;
         }
       }
     }
