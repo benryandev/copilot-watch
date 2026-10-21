@@ -2,6 +2,7 @@ name = "copilot-watch"
 main = "src/worker.js"
 compatibility_date = "2026-10-01"
 workers_dev = true
+preview_urls = false
 
 [[kv_namespaces]]
 binding = "KV"
