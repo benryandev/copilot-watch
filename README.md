@@ -17,6 +17,7 @@ Built during the Strike Finance hackathon (22–24 Oct 2026). Not affiliated wit
 | `/status` | Open copies, P&L and distance to liquidation, nearest first |
 | `/settings liq=5` | Liquidation alert threshold, 1–20% (a second alert always fires at 2%) |
 | `/unwatch <account>` | Stop watching one account |
+| `/paper <0x wallet> [size]` | Paper copy a Hyperliquid wallet before copying it for real (no money); `/paper` alone lists this chat's paper copies. A summary arrives daily at 08:00 Brisbane time; the trial page is on [Copilot Check](https://strike.benryan.com.au). |
 | `/stop` | Stop everything here and delete this chat's data |
 
 ## Alerts
@@ -27,7 +28,7 @@ Checked about every 2 minutes. Each alert fires once per event (a near-liquidati
 |---|---|---|
 | A1 | Copy near liquidation | Mark within the set % of the copy's liquidation price, again at 2%. Stock and commodity markets add a note that prices pause outside market hours. |
 | A2 | Orphaned copy | The copy is still open but the lead holds nothing on that market, or holds the opposite side, in two checks in a row. If the lead was liquidated there, the alert says so. |
-| A3 | Missed copy | The lead opened or added on a market Strike lists and this account has no copy fill for it within 10 minutes (likely caps, balance or a leverage lock). |
+| A3 | Missed copy | The lead opened or added on a market Strike lists and this account has no copy fill for it within 10 minutes (likely caps, balance or a leverage lock). At most one per market per hour. |
 | A4 | Lead close to liquidation | The lead's Hyperliquid cross maintenance margin reaches 60% of account value (Hyperliquid liquidates at 100%), on either the crypto or the stock/commodity account. |
 | A5 | Lead moved money out | More than half of the lead's Hyperliquid account withdrawn in 24 hours (matters for fixed-ratio copies, which size off the lead's equity). |
 | A6 | Copy liquidated or ended | A copy fill closed by liquidation or auto-deleverage, or the subscription changed to liquidated or stopped. |
@@ -50,6 +51,7 @@ Public, unauthenticated reads only. Copilot Watch never asks for an API key: Str
 A Cloudflare Worker (`src/worker.js`) with three entry points:
 
 - `POST /telegram`: Telegram webhook, checked against a secret header (constant-time compare). Direct messages only.
+- `/api/paper`: create and read Paper Copy trials for Copilot Check (CORS limited to strike.benryan.com.au; rate-limited; trials expire after 30 days).
 - `POST /discord`: Discord HTTP interactions, Ed25519 signature and timestamp checked; replies are deferred and then edited, alerts are posted to the channel. Mentions are always disabled and Strike-supplied names are markdown-escaped.
 - A cron every 2 minutes (`src/poll.js`) reads each watched account once and each lead once, however many chats watch them, diffs against the stored baseline, and sends alerts. A lead that Hyperliquid doesn't answer for is skipped for that round, never read as "holds nothing".
 
@@ -61,7 +63,7 @@ Stored per chat: the Telegram chat id or Discord channel and server ids, the use
 
 ## Limits
 
-- Per chat: 5 accounts, 10 commands a minute. Per Discord server: 3 channels. In total: 300 chats (a prototype limit). Each 2-minute run reads at most ~900 public endpoints; accounts and leads beyond that roll over to the next run. In Discord, only the person who set a watch or a member with Manage Server can change or stop it.
+- Per chat: 5 accounts, 10 commands a minute. Per Discord server: 3 channels. In total: 300 chats (a prototype limit). Each 2-minute run reads at most ~900 public endpoints; accounts and leads beyond that roll over to the next run. In Discord, the commands that change a watch need Manage Server by default (server admins can widen that in Server Settings → Integrations), and only the person who set a watch or a member with Manage Server can change or stop it. Names taken from Strike are stripped of link and mention characters.
 - Strike's copy list can lag up to 10 minutes, so a brand-new or just-stopped copy can take that long to show.
 - Caps, exclusions and leverage settings aren't public, so a missed-copy alert can only say "likely caps, balance or a leverage lock".
 - Hyperliquid rate-limits by IP and Workers share IPs; a busy round skips the lead rather than guessing.
@@ -74,7 +76,7 @@ pnpm sync-core                 # copy core/ from ../copilot-check
 pnpm dlx wrangler@4 secret put TELEGRAM_TOKEN            # and DISCORD_TOKEN, TELEGRAM_WEBHOOK_SECRET
 pnpm deploy
 node scripts/set-telegram.mjs  # webhook, commands, description
-node scripts/register-discord.mjs --guild <id> | --global
+node scripts/register-discord.mjs --guild <id>   # or --global
 node scripts/register-discord.mjs --set-endpoint https://<worker>/discord
 ```
 
