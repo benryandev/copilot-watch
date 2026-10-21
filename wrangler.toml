@@ -14,3 +14,9 @@ crons = ["*/2 * * * *"]
 [vars]
 DISCORD_APP_ID = "1561719393992319007"
 DISCORD_PUBLIC_KEY = "50e537c588ad61fa8b38b6ced330efecd368c0c74f351ea710808beba8d6cb48"
+
+# Per-chat command limit (Workers rate limiting binding; KV counters race under bursts)
+[[ratelimits]]
+name = "CMD_LIMITER"
+namespace_id = "1001"
+simple = { limit = 10, period = 60 }

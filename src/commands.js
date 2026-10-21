@@ -18,7 +18,7 @@ const canChange = (cmd, chat) => cmd.platform !== 'dc' || cmd.isAdmin || !chat |
 export async function handleCommand(cmd, deps) {
   const { store, strike, now = () => Date.now() } = deps;
   const key = chatKey(cmd.platform, cmd.chatId);
-  if (!(await store.rateOk(key))) return { text: T.rate, ephemeral: true };
+  if (!(await (deps.rateOk ? deps.rateOk(key) : store.rateOk(key)))) return { text: T.rate, ephemeral: true };
   const chat = await store.getChat(key);
   const args = (cmd.args || []).map(a => String(a)).filter(Boolean);
 
