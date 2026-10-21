@@ -7,7 +7,7 @@ Built during the Strike Finance hackathon (22–24 Oct 2026). Not affiliated wit
 ## Try it
 
 - **Telegram:** open [@CopilotWatchBot](https://t.me/CopilotWatchBot) and send `/start`.
-- **Discord:** add the bot to your server (install link below), then run `/watch` in the channel where alerts should go.
+- **Discord:** [add the bot to your server](https://discord.com/oauth2/authorize?client_id=1561719393992319007&scope=bot+applications.commands&permissions=19456) (permissions: view channel, send messages, embed links), then run `/watch` in the channel where alerts should go.
 
 `/watch` takes a Strike address (`addr1…`), a Strike nickname, or a sub-account ID (Strike app → Sub-accounts → Account ID → copy). An address or nickname watches the main account and every active sub-account; add a sub-account name to watch only that one (`/watch addr1… Sub1`).
 
