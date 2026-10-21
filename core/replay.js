@@ -171,7 +171,7 @@ export function replay({ orders, marks, start, size, lev, fee, cap = 0, tcap = 0
 /**
  * Fetch everything needed to replay one Hyperliquid wallet over the last `days`, within a budget: at most `maxPages`
  * fill pages (2,000 each) and 1h candles for the `maxCoins` most-traded symbols (by notional). Calls are sequential.
- * @returns {Promise<{orders, marks, equityHistory: number[][], nfills: number, truncated: boolean, unmarked: string[], t0: number, now: number}>}
+ * @returns {Promise<{orders, marks, equityHistory: number[][], fills: {coin, time, closedPnl}[], nfills: number, truncated: boolean, unmarked: string[], t0: number, now: number}>}
  */
 export async function fetchLead(addr, days, mk, { fetch, onProgress = null, maxPages = 10, maxCoins = 12, now = Date.now(), pause = 250 } = {}) {
   const user = addr.toLowerCase(); const t0 = now - Math.trunc(days * DAY);
@@ -193,5 +193,7 @@ export async function fetchLead(addr, days, mk, { fetch, onProgress = null, maxP
     onProgress?.({ step: 'equity', page: 1, pages: 1 });
     equityHistory = (await hl.portfolioHistory(user, { fetch })).accountValue;
   }
-  return { orders, marks, equityHistory, nfills: fills.length, truncated: fills.truncated, unmarked, t0, now };
+  // Slim fills (every coin, listed or not) for realised P&L by coin.
+  const slim = fills.map(f => ({ coin: f.coin, time: f.time, closedPnl: F(f.closedPnl || 0) }));
+  return { orders, marks, equityHistory, fills: slim, nfills: fills.length, truncated: fills.truncated, unmarked, t0, now };
 }
