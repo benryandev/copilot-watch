@@ -50,10 +50,14 @@ export async function poll(env, deps = null) {
   const active = await d.store.cachedLeaderboard(() => d.strike.leaderboard({ status: 'active' }));
   budget -= 4;
 
-  // Strike side, per account
+  // Strike side, per account: least recently read first, within the subrequest budget (the rest wait for the next run)
   const cur = new Map(), prevs = new Map();
-  for (const [id, a] of accounts) {
-    const prev = (await d.store.getAcct(id))?.base || null; prevs.set(id, prev);
+  const stored = new Map(await Promise.all([...accounts.keys()].map(async id => [id, (await d.store.getAcct(id))?.base || null])));
+  const order = [...accounts.keys()].sort((x, y) => (stored.get(x)?.at || 0) - (stored.get(y)?.at || 0));
+  for (const id of order) {
+    if (budget < PER_ACCOUNT + PER_LEAD) { accounts.delete(id); res.deferredAccounts = (res.deferredAccounts || 0) + 1; continue; }
+    const a = accounts.get(id);
+    const prev = stored.get(id); prevs.set(id, prev);
     const [copies, fills] = await Promise.all([d.strike.copyPositions(id).catch(() => null), d.strike.fills(id, { limit: 200 }).catch(() => null)]);
     budget -= PER_ACCOUNT;
     const subs = {};

@@ -85,3 +85,11 @@ test('a chat that blocked the bot is removed', async () => {
   deps.now = () => NOW + 120_000; const r = await poll({}, deps);
   assert.equal(r.removed, 1); assert.equal(await store.getChat('chat:tg:1'), null); assert.ok(await store.getChat('chat:tg:2'));
 });
+
+test('accounts beyond the budget wait for the next run', async () => {
+  const { deps, store } = await setup();
+  await store.putChat({ platform: 'tg', chatId: '3', ownerUserId: '3', accounts: [{ accountId: 'acc-x', label: 'X' }], settings: { liq: 5 }, createdAt: 0 });
+  deps.budget = 4 + 3 + 4; // room for one account and one lead
+  const r = await poll({}, deps);
+  assert.equal(r.accounts, 1); assert.equal(r.deferredAccounts, 1);
+});

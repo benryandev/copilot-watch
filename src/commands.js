@@ -3,7 +3,7 @@ import { T } from './text.js';
 import { resolveWatchTarget } from './resolve.js';
 import { chatKey } from './store.js';
 
-export const MAX_ACCOUNTS = 5, MAX_CHANNELS_PER_GUILD = 3;
+export const MAX_ACCOUNTS = 5, MAX_CHANNELS_PER_GUILD = 3, MAX_CHATS = 300;
 
 /** Active copies for an account from the (cached) leaderboard. */
 export const subsFor = (rows, accountId) => rows.filter(r => r.followerId === accountId && r.status === 'active');
@@ -29,6 +29,7 @@ export async function handleCommand(cmd, deps) {
     case 'watch': {
       if (!args.length) return { text: T.help };
       if (chat && !canChange(cmd, chat)) return { text: T.notOwner, ephemeral: true };
+      if (!chat && (await store.countChats()) >= MAX_CHATS) return { text: T.full };
       if (cmd.platform === 'dc' && !chat && cmd.guildId) {
         const inGuild = (await store.listChats()).filter(c => c.platform === 'dc' && c.guildId === cmd.guildId);
         if (inGuild.length >= MAX_CHANNELS_PER_GUILD) return { text: T.tooManyChannels };

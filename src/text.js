@@ -21,6 +21,7 @@ export const T = {
   help: 'Commands:\n/watch <addr1, nickname or sub-account ID> [sub-account name]\n/status: open copies and how close each is to liquidation\n/settings liq=5: alert when a copy is within this % of liquidation (1 to 20)\n/unwatch <account>: stop watching one account\n/stop: stop everything and delete this chat\'s data\n\nSub-account IDs: Strike app, Sub-accounts page, Account ID column, copy button.',
   dmOnly: 'Copilot Watch works in direct messages only. Open a chat with the bot and send /start.',
   rate: 'Too many commands, try again in a minute.',
+  full: 'Copilot Watch is at its limit of watched chats for now (it is a hackathon prototype). Try again later.',
   badInput: 'That doesn\'t look like a Strike address (addr1…), nickname or account ID. Send /help for examples.',
   hlAddr: 'That is a Hyperliquid wallet. /watch takes the Strike account that copies it: its address (addr1…), nickname or sub-account ID.',
   notFound: 'No Strike account found for that. Check the spelling, or use the address (addr1…) or the account ID from the Sub-accounts page.',

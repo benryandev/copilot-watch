@@ -57,11 +57,11 @@ State lives in Workers KV. `core/` (HTTP with backoff, Strike and Hyperliquid cl
 
 ## Privacy
 
-Stored per chat: the Telegram chat id or Discord channel and server ids, the user id that set the watch (Discord permissions), the accounts watched, the alert threshold, and per account the last 200 fill ids and open copies seen (public data). No message text is stored and logs carry counts only. `/stop` deletes the chat's data; accounts no longer watched by anyone are deleted with it.
+Stored per chat: the Telegram chat id or Discord channel and server ids, the user id that set the watch (Discord permissions), the accounts watched, the alert threshold, and per account the last 200 fill ids and open copies seen (public data). Alert text is stored only when Telegram or Discord can't take it, for up to an hour so it can be resent; logs carry counts only. `/stop` deletes the chat's data; accounts no longer watched by anyone are deleted with it.
 
 ## Limits
 
-- Per chat: 5 accounts, 10 commands a minute. Per Discord server: 3 channels. In Discord, only the person who set a watch or a member with Manage Server can change or stop it.
+- Per chat: 5 accounts, 10 commands a minute. Per Discord server: 3 channels. In total: 300 chats (a prototype limit). Each 2-minute run reads at most ~900 public endpoints; accounts and leads beyond that roll over to the next run. In Discord, only the person who set a watch or a member with Manage Server can change or stop it.
 - Strike's copy list can lag up to 10 minutes, so a brand-new or just-stopped copy can take that long to show.
 - Caps, exclusions and leverage settings aren't public, so a missed-copy alert can only say "likely caps, balance or a leverage lock".
 - Hyperliquid rate-limits by IP and Workers share IPs; a busy round skips the lead rather than guessing.

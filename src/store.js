@@ -32,6 +32,7 @@ export function createStore(kv, { now = () => Date.now() } = {}) {
       for (const a of chat.accounts) await s.unlinkAcct(a.accountId, key);
       await kv.delete(key); return true;
     },
+    async countChats() { return (await listAll('chat:')).length; },
     async listChats() { const keys = await listAll('chat:'); return (await Promise.all(keys.map(getJ))).filter(Boolean); },
     getAcct: id => getJ(`acct:${id}`),
     putAcct: (id, v) => putJ(`acct:${id}`, v),

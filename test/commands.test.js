@@ -52,3 +52,8 @@ test('rate limit after 10 commands a minute', async () => {
   const d = setup(); for (let i = 0; i < 10; i++) await handleCommand(tg('help'), d);
   assert.equal((await handleCommand(tg('help'), d)).text, 'Too many commands, try again in a minute.');
 });
+
+test('global chat cap', async () => {
+  const d = setup(); d.store.countChats = async () => 300;
+  assert.match((await handleCommand(tg('watch', [ADDR], '77'), d)).text, /at its limit/);
+});
