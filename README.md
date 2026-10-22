@@ -4,6 +4,8 @@ Telegram and Discord alerts for Strike copy traders: hear when a copy is close t
 
 Built during the Strike Finance hackathon (22–24 Oct 2026). Not affiliated with Strike Finance. Not financial advice.
 
+**Related tools:** [Copilot Check](https://github.com/benryandev/copilot-check) ([try it](https://strike.benryan.com.au)) shows whether a Hyperliquid wallet is worth copying on Strike, and paper-copies it before you risk money. [Strike Copilot](https://github.com/benryandev/strike-copilot) reviews your Strike account and helps you set copies up, by chatting with Claude on your own computer.
+
 ## Try it
 
 - **Telegram:** open [@CopilotWatchBot](https://t.me/CopilotWatchBot) and send `/start`.
