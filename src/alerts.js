@@ -22,11 +22,9 @@ const MIN = 60_000;
 const ymd = t => new Date(t).toISOString().slice(0, 10);
 
 /** The lead's net size in a Strike market: its coin plus same-name twins on other builder dexes (Strike copies them all). */
-function leadSize(lead, coins) {
-  let s = 0;
-  for (const p of allPositions(lead.ch)) if (coins.includes(p.coin)) s += p.szi;
-  return s;
-}
+// Per-dex positions are not netted: a lead can be short xyz:AAOI and long para:AAOI at once (22 Oct 2026),
+// and the copy follows one of them. A copy is held while any dex has the lead on the copy's side.
+const leadSides = (lead, coins) => allPositions(lead.ch).filter(p => coins.includes(p.coin) && p.szi !== 0).map(p => (p.szi > 0 ? 'long' : 'short'));
 const isLiqFill = (f, addr) => !!f.liquidation && (!f.liquidation.liquidatedUser || f.liquidation.liquidatedUser.toLowerCase() === addr);
 const opens = f => /^Open |>/.test(f.dir || '');
 const openSide = f => (/Long$/.test(f.dir) ? 'long' : 'short');
@@ -39,8 +37,7 @@ export function findOrphans(cur, leads, mk) {
     const lead = leads[c.leadId];
     if (!lead) continue; // missing or null: skip, never infer "flat"
     const coins = coinsOf(mk[c.market]); if (!coins.length) continue;
-    const sz = leadSize(lead, coins);
-    if (sz === 0 || (sz > 0) !== (c.side === 'long')) out.push(`${c.subId || c.leadId}:${c.market}:${c.side}`);
+    if (!leadSides(lead, coins).includes(c.side)) out.push(`${c.subId || c.leadId}:${c.market}:${c.side}`);
   }
   return out;
 }
@@ -95,8 +92,8 @@ export function detectAlerts(prev, cur, settings, { leads = {}, mk = {}, now = D
     if (!(cur.orphans || []).includes(k) || !prevOrphans.has(k)) continue;
     const last = (lead.fills || []).filter(f => coins.includes(f.coin)).at(-1);
     if (last && isLiqFill(last, c.leadId)) { add('A2', k, A.A2liq(label, c)); continue; }
-    const sz = leadSize(lead, coins);
-    add('A2', k, A.A2(label, c, sz === 0 ? `no longer holds ${c.market.replace(/-USD$/, '')}` : `is now ${sz > 0 ? 'long' : 'short'} instead`));
+    const sides = leadSides(lead, coins);
+    add('A2', k, A.A2(label, c, sides.length ? `is now ${sides[0]} instead` : `no longer holds ${c.market.replace(/-USD$/, '')}`));
   }
 
   // A3: a lead open/add on a Strike market with no copy fill within 10 minutes

@@ -136,3 +136,14 @@ test('A2: a position on another builder dex (io:DRAM) counts as the lead holding
   const a = detectAlerts({ ...c2 }, c2, { liq: 5 }, { leads: gone, mk: m, now: NOW }).filter(a => a.kind === 'A2');
   assert.equal(a.length, 1); assert.match(a[0].text, /no longer holds DRAM\b/);
 });
+
+// 22 Oct 2026: the lead was short xyz:AAOI and long para:AAOI; netting the two said "now long instead" against Demo's short copy.
+test('A2: opposite positions on two dexes are not netted; the copied side still counts as held', () => {
+  const m = { ...mk, 'AAOI-USD': { hl: 'xyz:AAOI', alt: ['para:AAOI'], tiers: [[1e18, 10, 0.025, 0]] } };
+  const base = leadState([{ coin: 'xyz:AAOI', szi: -200 }]);
+  const held = { [L]: { ...base, ch: { ...base.ch, para: { accountValue: 500, marginUsed: 50, maintUsed: 5, positions: [{ coin: 'para:AAOI', szi: 430 }] } } } };
+  const cur = snap({ copies: [copy('AAOI-USD', 'short')] });
+  cur.orphans = findOrphans(cur, held, m);
+  assert.deepEqual(cur.orphans, []);
+  assert.deepEqual(detectAlerts({ ...cur, orphans: ['s1:AAOI-USD:short'] }, cur, { liq: 5 }, { leads: held, mk: m, now: NOW }).filter(a => a.kind === 'A2'), []);
+});
