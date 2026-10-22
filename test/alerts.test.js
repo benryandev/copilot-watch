@@ -91,3 +91,9 @@ test('A3 at most once per market per hour', () => {
   const fl = [0, 1, 2].map(i => ({ coin: 'BTC', dir: 'Open Long', time: NOW - (12 + i) * 60000, oid: 100 + i }));
   assert.equal(run(snap(), snap(), { [L]: leadState([], { fills: fl }) }).filter(a => a.kind === 'A3').length, 1);
 });
+
+test('alert prices are rounded to 5 significant figures', async () => {
+  const { px } = await import('../src/text.js');
+  assert.equal(px('386.57804342'), '386.58'); assert.equal(px('400.15301707884936'), '400.15');
+  assert.equal(px('5.776850571902943691'), '5.7769'); assert.equal(px('84134'), '84134'); assert.equal(px('abc'), '?');
+});
