@@ -53,7 +53,7 @@ test('A3 waits 10 minutes and matches only its own subscription tag', () => {
   assert.equal(run(snap(), cur(), { [L]: leadState([], { fills: [f(9)] }) }).filter(a => a.kind === 'A3').length, 0);
   const other = [{ id: 'x', symbol: 'BTC-USD', ts: NOW - 10.5 * 60000, copySubId: 'other-sub' }];
   const a = run(snap(), cur(null, other), { [L]: leadState([], { fills: [f(11)] }) }).filter(a => a.kind === 'A3');
-  assert.equal(a.length, 1); assert.equal(a[0].key, `A3:${L}:BTC-USD:${Math.floor((NOW - 11 * 60000) / 3600000)}`); assert.match(a[0].text, /BTC long/);
+  assert.equal(a.length, 1); assert.equal(a[0].key, `A3:${L}:BTC-USD:${Math.floor((NOW - 11 * 60000) / 3600000)}`); assert.match(a[0].text, /a long in BTC /);
   const mine = [{ id: 'y', symbol: 'BTC-USD', ts: NOW - 10.5 * 60000, copySubId: 's1' }];
   assert.equal(run(snap(), cur(null, mine), { [L]: leadState([], { fills: [f(11)] }) }).filter(a => a.kind === 'A3').length, 0);
 });

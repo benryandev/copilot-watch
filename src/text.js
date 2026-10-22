@@ -69,7 +69,7 @@ export const A = {
   A2liq: (label, c) =>
     `${label}: the lead ${short(c.leadId)} was liquidated on ${mkt(c.market)}. Check whether this copy closed; it still shows open.`,
   A3: (label, leadId, sym, side) =>
-    `${label}: the lead ${short(leadId)} opened or added a ${mkt(sym)} ${side} more than 10 minutes ago and this account has no copy fill for it (likely caps, balance or a leverage lock). ` +
+    `${label}: the lead ${short(leadId)} opened or added a ${side} in ${mkt(sym)} more than 10 minutes ago and this account has no copy fill for it (likely caps, balance or a leverage lock). ` +
     'Options: check the copy settings in Strike, or leave it.',
   A4: (leadId, dex, ratio) =>
     `The lead ${short(leadId)} is close to liquidation on Hyperliquid${dex === 'main' ? '' : ' (stocks and commodities)'}: maintenance margin is ${pct(ratio * 100)} of account value, and Hyperliquid liquidates at 100%. ` +
