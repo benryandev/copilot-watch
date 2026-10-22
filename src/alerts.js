@@ -13,7 +13,10 @@ import { hlMap, isOffHours } from '../core/markets.js';
 export const COOL = { A1: 6 * 3600, default: 24 * 3600 };
 export const A4_RATIO = 0.6;
 /** Message order: most urgent first. */
-export const PRIORITY = { A1: 0, A6: 1, A2: 2, A3: 3, A4: 4, A5: 5 };
+export const PRIORITY = { A1: 0, A6: 1, A7: 2, A2: 3, A3: 4, A4: 5, A5: 6 };
+/** A7 fires when the copy would be liquidated at least this far (share of mark) before the lead's isolated position, and is within 20% of liquidation.
+ * Cross positions are left out: their liquidation price depends on the lead's whole account, which A4 watches. */
+export const A7_GAP = 0.02, A7_MAX_DIST = 0.2;
 const MIN = 60_000;
 const ymd = t => new Date(t).toISOString().slice(0, 10);
 
@@ -60,6 +63,24 @@ export function detectAlerts(prev, cur, settings, { leads = {}, mk = {}, now = D
     const id = `${c.subId || c.leadId || 'own'}:${c.market}:${c.side}`;
     if (dist <= thr) add('A1', `${id}:${Math.round(thr * 100)}`, A.A1(label, c, dist * 100, isOffHours(mk, c.market)));
     if (dist <= 0.02 && thr > 0.02) add('A1', `${id}:2`, A.A1(label, c, dist * 100, isOffHours(mk, c.market)));
+  }
+
+  // A7: copy would be liquidated before the lead's own isolated position (Strike copies the leverage setting, not margin added later)
+  for (const c of cur.copies || []) {
+    if (!c.leadId || !c.liq || !c.mark) continue;
+    const lead = leads[c.leadId]; if (!lead) continue;
+    const coin = mk[c.market]?.hl; if (!coin) continue;
+    const lp = ['main', 'xyz'].flatMap(d => lead.ch?.[d]?.positions || []).find(p => p.coin === coin && p.szi !== 0 && (p.szi > 0) === (c.side === 'long'));
+    if (!lp || lp.levType !== 'isolated' || lp.liqPx == null) continue;
+    const long = c.side === 'long', dist = (long ? c.mark - c.liq : c.liq - c.mark) / c.mark;
+    if (dist <= 0 || dist > A7_MAX_DIST) continue;
+    const leadMark = lp.value && lp.szi ? lp.value / Math.abs(lp.szi) : c.mark;
+    const leadDist = (long ? leadMark - lp.liqPx : lp.liqPx - leadMark) / leadMark;
+    if (leadDist - dist < A7_GAP) continue;
+    // margin added: the lead's liquidation sits well beyond what its leverage setting alone would allow from its entry
+    const added = lp.entry > 0 && lp.lev > 0 && Math.abs(lp.entry - lp.liqPx) / lp.entry > 1.2 / lp.lev;
+    const toMatch = c.marginMode === 'isolated' && c.size ? Math.abs(c.liq - lp.liqPx) * c.size : null;
+    add('A7', `${c.subId || c.leadId}:${c.market}:${c.side}`, A.A7(label, c, dist * 100, lp, leadDist * 100, toMatch, added));
   }
 
   // A2: orphaned copy, only when seen in two polls in a row (a close the copy is still following doesn't count)

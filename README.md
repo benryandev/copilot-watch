@@ -32,6 +32,7 @@ Checked about every 2 minutes. Each alert fires once per event (a near-liquidati
 | A4 | Lead close to liquidation | The lead's Hyperliquid cross maintenance margin reaches 60% of account value (Hyperliquid liquidates at 100%), on either the crypto or the stock/commodity account. |
 | A5 | Lead moved money out | More than half of the lead's Hyperliquid account withdrawn in 24 hours (matters for fixed-ratio copies, which size off the lead's equity). |
 | A6 | Copy liquidated or ended | A copy fill closed by liquidation or auto-deleverage, or the subscription changed to liquidated or stopped. |
+| A7 | Copy liquidated before the lead | The copy is within 20% of liquidation and would be liquidated at least 2% (of mark) before the lead's own isolated position on that market, usually because the lead added margin after opening (Strike copies the leverage setting, not added margin). Gives the margin that would match the lead's liquidation price. Cross positions are left out: their liquidation depends on the lead's whole account, which A4 watches. |
 
 ## How it uses Strike
 

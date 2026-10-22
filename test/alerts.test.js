@@ -97,3 +97,28 @@ test('alert prices are rounded to 5 significant figures', async () => {
   assert.equal(px('386.57804342'), '386.58'); assert.equal(px('400.15301707884936'), '400.15');
   assert.equal(px('5.776850571902943691'), '5.7769'); assert.equal(px('84134'), '84134'); assert.equal(px('abc'), '?');
 });
+
+test('A7: copy liquidated before the lead, with the margin to match', () => {
+  const cx = { 'CXMT-USD': { hl: 'xyz:CXMT', tiers: [[1e18, 10, 0.025, 0]] } };
+  const c = copy('CXMT-USD', 'long', { mark: 6.1, liq: 5.7769, size: 476.6, leverage: 10, marginMode: 'isolated' });
+  const lead = liqPx => ({ [L]: leadState([{ coin: 'xyz:CXMT', szi: 7200, value: 43920, liqPx, lev: 10, levType: 'isolated', entry: 6.588 }]) });
+  const go = (cp, leads) => detectAlerts(snap(), snap({ copies: [cp] }), { liq: 5 }, { leads, mk: cx, now: NOW }).filter(a => a.kind === 'A7');
+  const a = go(c, lead(5.2411));
+  assert.equal(a.length, 1); assert.equal(a[0].key, 'A7:s1:CXMT-USD:long');
+  assert.match(a[0].text, /CXMT long copy would be liquidated before the lead's own position/);
+  assert.match(a[0].text, /liquidation 5\.7769 \(5\.3% away\)/); assert.match(a[0].text, /liquidation 5\.2411 \(14\.1% away\)/);
+  assert.match(a[0].text, /add about \$255 margin/);
+  assert.equal(go(c, lead(5.85)).length, 0, 'lead closer to liquidation: no alert');
+  assert.equal(go(c, lead(5.70)).length, 0, 'gap under 2% of mark: no alert');
+  assert.equal(go({ ...c, liq: 4.5 }, lead(4.0)).length, 0, 'copy more than 20% away: no alert');
+  assert.equal(go({ ...c, side: 'short', liq: 6.5 }, lead(5.2411)).length, 0, 'lead on the other side: no alert');
+  assert.equal(go(c, { [L]: null }).length, 0, 'lead unreadable: no alert');
+  assert.match(a[0].text, /10x isolated with margin added/); assert.match(a[0].text, /not margin they add/);
+  const plain = go({ ...c, liq: 5.9 }, { [L]: leadState([{ coin: 'xyz:CXMT', szi: 7200, value: 43920, liqPx: 5.75, lev: 10, levType: 'isolated', entry: 6.2 }]) });
+  assert.equal(plain.length, 1); assert.doesNotMatch(plain[0].text, /margin added|not margin they add/);
+  const crossLead = { [L]: leadState([{ coin: 'xyz:CXMT', szi: 7200, value: 43920, liqPx: 2.1, lev: 10, levType: 'cross' }]) };
+  assert.equal(go(c, crossLead).length, 0, 'lead cross: account-level risk is A4, no A7');
+  assert.equal(go(c, lead(null)).length, 0, 'no lead liquidation price: no alert');
+  const cc = go({ ...c, marginMode: 'cross' }, lead(5.2411));
+  assert.equal(cc.length, 1); assert.match(cc[0].text, /Options: add margin to this position in Strike, or leave it/);
+});

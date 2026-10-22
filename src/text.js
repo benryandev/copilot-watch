@@ -15,7 +15,7 @@ export const mkt = sym => (sym || '').replace(/-USD$/, '');
 export const T = {
   start: 'Copilot Watch sends alerts about Strike copy trades. It reads public data only and never asks for a key.\n\n' +
     'Send /watch with a Strike address (addr1…), a nickname or a sub-account ID. Add a sub-account name after an address to watch only that one, e.g. /watch addr1… Sub1.\n\n' +
-    'Alerts: a copy near liquidation, a copy the lead has already closed, a lead trade that wasn\'t copied, a lead using most of their margin, a lead withdrawing most of their funds, and a copy closed by liquidation.\n\n' +
+    'Alerts: a copy near liquidation, a copy the lead has already closed, a lead trade that wasn\'t copied, a copy that would be liquidated before the lead, a lead using most of their margin, a lead withdrawing most of their funds, and a copy closed by liquidation.\n\n' +
     'Commands: /status, /settings liq=5, /unwatch <account>, /paper <0x wallet> (try a copy on paper first), /stop.\n\n' +
     'Stored: this chat\'s id, the accounts you watch and the last fills seen. /stop deletes all of it. ' + DISCLAIMER,
   help: 'Commands:\n/watch <addr1, nickname or sub-account ID> [sub-account name]\n/status: open copies and how close each is to liquidation\n/settings liq=5: alert when a copy is within this % of liquidation (1 to 20)\n/unwatch <account>: stop watching one account\n/paper <0x wallet> [size]: paper copy a Hyperliquid wallet (no money)\n/stop: stop everything and delete this chat\'s data\n\nSub-account IDs: Strike app, Sub-accounts page, Account ID column, copy button.',
@@ -79,6 +79,11 @@ export const A = {
     'With fixed ratio, copy sizes follow the lead\'s equity, so later copies can change size.',
   A6fill: (label, f, kind) =>
     `${label}: a ${mkt(f.symbol)} copy was closed by ${kind === 'adl' ? 'auto-deleverage (ADL)' : 'liquidation'} (${day(f.ts)}${f.pnl ? `, P&L ${usd(f.pnl, true)}` : ''}).`,
+  A7: (label, c, dist, lp, leadDist, toMatch, added) =>
+    `${label}: the ${mkt(c.market)} ${c.side} copy would be liquidated before the lead's own position. ` +
+    `Copy: ${c.leverage}x, liquidation ${px(c.liq)} (${pct(dist)} away). The lead ${short(c.leadId)}: ${lp.lev}x isolated${added ? ' with margin added' : ''}, liquidation ${px(lp.liqPx)} (${pct(leadDist)} away). ` +
+    (added ? 'Strike copies the lead\'s leverage setting, not margin they add to a position later. ' : '') +
+    `Options: ${toMatch ? `add about ${usd(toMatch)} margin to this position in Strike to match the lead's liquidation price, ` : 'add margin to this position in Strike, '}or leave it.`,
   A6sub: (label, leadId, status) =>
     `${label}: the copy of ${short(leadId)} is now ${status} on Strike's copy list.`,
 };
