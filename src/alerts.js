@@ -8,7 +8,8 @@
 // leads = {leadAddr: null | {ch: {main, xyz}, fills: [{coin, dir, time, oid, liquidation}], withdrawn24h, accountValue}}
 //   null = Hyperliquid didn't answer this round: never read as "the lead holds nothing".
 import { A } from './text.js';
-import { hlMap, isOffHours } from '../core/markets.js';
+import { hlMap, isOffHours, coinsOf } from '../core/markets.js';
+import { allPositions } from '../core/hl.js';
 
 export const COOL = { A1: 6 * 3600, default: 24 * 3600 };
 export const A4_RATIO = 0.6;
@@ -20,9 +21,10 @@ export const A7_GAP = 0.02, A7_MAX_DIST = 0.2;
 const MIN = 60_000;
 const ymd = t => new Date(t).toISOString().slice(0, 10);
 
-function leadSize(lead, coin) {
+/** The lead's net size in a Strike market: its coin plus same-name twins on other builder dexes (Strike copies them all). */
+function leadSize(lead, coins) {
   let s = 0;
-  for (const d of ['main', 'xyz']) for (const p of lead.ch?.[d]?.positions || []) if (p.coin === coin) s += p.szi;
+  for (const p of allPositions(lead.ch)) if (coins.includes(p.coin)) s += p.szi;
   return s;
 }
 const isLiqFill = (f, addr) => !!f.liquidation && (!f.liquidation.liquidatedUser || f.liquidation.liquidatedUser.toLowerCase() === addr);
@@ -36,8 +38,8 @@ export function findOrphans(cur, leads, mk) {
     if (!c.leadId) continue;
     const lead = leads[c.leadId];
     if (!lead) continue; // missing or null: skip, never infer "flat"
-    const coin = mk[c.market]?.hl; if (!coin) continue;
-    const sz = leadSize(lead, coin);
+    const coins = coinsOf(mk[c.market]); if (!coins.length) continue;
+    const sz = leadSize(lead, coins);
     if (sz === 0 || (sz > 0) !== (c.side === 'long')) out.push(`${c.subId || c.leadId}:${c.market}:${c.side}`);
   }
   return out;
@@ -69,8 +71,8 @@ export function detectAlerts(prev, cur, settings, { leads = {}, mk = {}, now = D
   for (const c of cur.copies || []) {
     if (!c.leadId || !c.liq || !c.mark) continue;
     const lead = leads[c.leadId]; if (!lead) continue;
-    const coin = mk[c.market]?.hl; if (!coin) continue;
-    const lp = ['main', 'xyz'].flatMap(d => lead.ch?.[d]?.positions || []).find(p => p.coin === coin && p.szi !== 0 && (p.szi > 0) === (c.side === 'long'));
+    const coins = coinsOf(mk[c.market]); if (!coins.length) continue;
+    const lp = allPositions(lead.ch).find(p => coins.includes(p.coin) && p.szi !== 0 && (p.szi > 0) === (c.side === 'long'));
     if (!lp || lp.levType !== 'isolated' || lp.liqPx == null) continue;
     const long = c.side === 'long', dist = (long ? c.mark - c.liq : c.liq - c.mark) / c.mark;
     if (dist <= 0 || dist > A7_MAX_DIST) continue;
@@ -88,13 +90,13 @@ export function detectAlerts(prev, cur, settings, { leads = {}, mk = {}, now = D
   for (const c of cur.copies || []) {
     if (!c.leadId) continue;
     const lead = leads[c.leadId]; if (!lead) continue;
-    const coin = mk[c.market]?.hl; if (!coin) continue;
+    const coins = coinsOf(mk[c.market]); if (!coins.length) continue;
     const k = `${c.subId || c.leadId}:${c.market}:${c.side}`;
     if (!(cur.orphans || []).includes(k) || !prevOrphans.has(k)) continue;
-    const last = (lead.fills || []).filter(f => f.coin === coin).at(-1);
+    const last = (lead.fills || []).filter(f => coins.includes(f.coin)).at(-1);
     if (last && isLiqFill(last, c.leadId)) { add('A2', k, A.A2liq(label, c)); continue; }
-    const sz = leadSize(lead, coin);
-    add('A2', k, A.A2(label, c, sz === 0 ? `no longer holds ${coin.replace('xyz:', '')}` : `is now ${sz > 0 ? 'long' : 'short'} instead`));
+    const sz = leadSize(lead, coins);
+    add('A2', k, A.A2(label, c, sz === 0 ? `no longer holds ${c.market.replace(/-USD$/, '')}` : `is now ${sz > 0 ? 'long' : 'short'} instead`));
   }
 
   // A3: a lead open/add on a Strike market with no copy fill within 10 minutes
@@ -119,8 +121,8 @@ export function detectAlerts(prev, cur, settings, { leads = {}, mk = {}, now = D
   // A4: lead close to liquidation on either dex (cross maintenance margin >= 60% of account value)
   for (const leadId of Object.keys(cur.subs || {})) {
     const lead = leads[leadId]; if (!lead) continue;
-    for (const dex of ['main', 'xyz']) {
-      const d = lead.ch?.[dex];
+    for (const dex of Object.keys(lead.ch || {})) {
+      const d = lead.ch[dex];
       if (d && d.accountValue > 0 && d.maintUsed / d.accountValue >= A4_RATIO) add('A4', `${leadId}:${dex}:${ymd(now)}`, A.A4(leadId, dex, d.maintUsed / d.accountValue));
     }
     // A5: more than half the perp account withdrawn in 24 h

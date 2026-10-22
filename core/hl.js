@@ -30,14 +30,33 @@ const dexState = st => ({
     lev: F(p.leverage?.value || 0), levType: p.leverage?.type || null, value: F(p.positionValue || 0), upnl: F(p.unrealizedPnl || 0) })),
 });
 
-/** Both dexes: {main, xyz}, each {accountValue, marginUsed, positions: [{coin, szi, liqPx, lev}]}. xyz coins carry the "xyz:" prefix. */
-export async function clearinghouse(user, { fetch, waits } = {}) {
-  const main = await hlInfo({ type: 'clearinghouseState', user }, { want: Object, fetch, ...(waits ? { waits } : {}) });
-  const xyz = await hlInfo({ type: 'clearinghouseState', user, dex: 'xyz' }, { want: Object, fetch, ...(waits ? { waits } : {}) });
-  const x = dexState(xyz);
-  for (const p of x.positions) if (!p.coin.startsWith('xyz:')) p.coin = `xyz:${p.coin}`;
-  return { main: dexState(main), xyz: x };
+/** {main, xyz, ...dexes}, each {accountValue, marginUsed, positions: [{coin, szi, liqPx, lev}]}. Builder-dex coins carry their
+ * prefix ("xyz:GOLD", "io:DRAM"). `dexes` adds builder dexes beyond xyz (see markets.altDexes). */
+export async function clearinghouse(user, { fetch, waits, dexes = [] } = {}) {
+  const read = dex => hlInfo({ type: 'clearinghouseState', user, ...(dex ? { dex } : {}) }, { want: Object, fetch, ...(waits ? { waits } : {}) });
+  const out = { main: dexState(await read(null)) };
+  for (const dex of ['xyz', ...dexes.filter(d => d !== 'xyz')]) {
+    const x = dexState(await read(dex));
+    for (const p of x.positions) if (!p.coin.startsWith(`${dex}:`)) p.coin = `${dex}:${p.coin}`;
+    out[dex] = x;
+  }
+  return out;
 }
+
+/** Builder dexes other than xyz: {dex: Set of "dex:COIN"}. One perpDexs call plus one meta per dex. */
+export async function otherDexes({ fetch } = {}) {
+  const list = await hlInfo({ type: 'perpDexs' }, { want: Array, fetch });
+  const names = list.filter(d => d && d.name && d.name !== 'xyz').map(d => d.name);
+  const out = {};
+  for (const dex of names) {
+    const m = await hlInfo({ type: 'meta', dex }, { want: Object, fetch });
+    out[dex] = new Set((m.universe || []).filter(u => !u.isDelisted).map(u => (u.name.includes(':') ? u.name : `${dex}:${u.name}`)));
+  }
+  return out;
+}
+
+/** All positions across the dexes read. */
+export const allPositions = ch => Object.values(ch || {}).flatMap(d => d?.positions || []);
 
 /** 1h (default) candles: [{T, c, l, h}] with numbers. */
 export async function candles(coin, t0, t1, { interval = '1h', fetch } = {}) {

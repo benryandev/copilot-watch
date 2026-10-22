@@ -32,7 +32,7 @@ export async function dailyPaper(env, deps = null) {
   const chats = (await d.store.listChats()).filter(c => c.trials?.length);
   const res = { chats: 0, trials: 0, failed: 0 };
   if (!chats.length) { console.log(res); return res; }
-  const meta = await d.hl.meta(); const mk = buildMarkets(await d.strike.markets(), meta.core, meta.xyz);
+  const meta = await d.hl.meta(); const mk = buildMarkets(await d.strike.markets(), meta.core, meta.xyz, meta.other || {});
   let budget = 60; const fundingCache = new Map();  // funding is per market, so trials in one run share it
   for (const c of chats) {
     const lines = [];

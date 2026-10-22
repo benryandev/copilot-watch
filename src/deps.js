@@ -15,14 +15,15 @@ export function makeDeps(env) {
     markets: () => strikeApi.markets(),
   };
   const hl = {
-    clearinghouse: u => hlApi.clearinghouse(u, { waits: [0, 2000] }),
+    clearinghouse: (u, dexes = []) => hlApi.clearinghouse(u, { waits: [0, 2000], dexes }),
     fillsByTime: (u, t0, t1) => hlApi.fillsByTime(u, t0, t1, { maxPages: 1, pause: 0 }),
     ledger: (u, t0) => hlApi.ledger(u, t0),
     meta: async () => {
       const { hlInfo } = await import('../core/http.js');
       const core = await hlInfo({ type: 'meta' }, { want: Object });
       const xyz = await hlInfo({ type: 'meta', dex: 'xyz' }, { want: Object });
-      return { core: new Set(core.universe.map(u => u.name)), xyz: new Set(xyz.universe.map(u => u.name)) };
+      const other = await hlApi.otherDexes().catch(() => ({}));
+      return { core: new Set(core.universe.map(u => u.name)), xyz: new Set(xyz.universe.map(u => u.name)), other };
     },
   };
   // Cloudflare's rate limiting binding when deployed; the KV counter is only a fallback (it races under bursts).

@@ -122,3 +122,17 @@ test('A7: copy liquidated before the lead, with the margin to match', () => {
   const cc = go({ ...c, marginMode: 'cross' }, lead(5.2411));
   assert.equal(cc.length, 1); assert.match(cc[0].text, /Options: add margin to this position in Strike, or leave it/);
 });
+
+// 22 Oct 2026: Demo's DRAM short copied the lead's io:DRAM short; the lead held it, but A2 said it didn't (only main/xyz were read).
+test('A2: a position on another builder dex (io:DRAM) counts as the lead holding the market', () => {
+  const m = { ...mk, 'DRAM-USD': { hl: 'xyz:DRAM', alt: ['io:DRAM'], tiers: [[1e18, 10, 0.025, 0]] } };
+  const held = { [L]: { ...leadState([]), ch: { ...leadState([]).ch, io: { accountValue: 500, marginUsed: 50, maintUsed: 5, positions: [{ coin: 'io:DRAM', szi: -143.9 }] } } } };
+  const cur = snap({ copies: [copy('DRAM-USD', 'short')] });
+  cur.orphans = findOrphans(cur, held, m);
+  assert.deepEqual(cur.orphans, []);
+  assert.deepEqual(detectAlerts({ ...cur, orphans: ['s1:DRAM-USD:short'] }, cur, { liq: 5 }, { leads: held, mk: m, now: NOW }).filter(a => a.kind === 'A2'), []);
+  // and when it really is gone from every dex, the alert names the Strike market
+  const gone = { [L]: leadState([]) }; const c2 = snap({ copies: [copy('DRAM-USD', 'short')] }); c2.orphans = findOrphans(c2, gone, m);
+  const a = detectAlerts({ ...c2 }, c2, { liq: 5 }, { leads: gone, mk: m, now: NOW }).filter(a => a.kind === 'A2');
+  assert.equal(a.length, 1); assert.match(a[0].text, /no longer holds DRAM\b/);
+});

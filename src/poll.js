@@ -1,7 +1,7 @@
 // The 2-minute cron: read public Strike and Hyperliquid data for every watched account, diff against the stored
 // baseline, send new alerts. The first poll for an account only stores its baseline. Logs carry counts only.
 import { detectAlerts, findOrphans, PRIORITY } from './alerts.js';
-import { buildMarkets } from '../core/markets.js';
+import { buildMarkets, altDexes } from '../core/markets.js';
 import { HlBusyError } from '../core/http.js';
 import { makeDeps } from './deps.js';
 import { sendTelegram } from './telegram.js';
@@ -9,23 +9,23 @@ import { postDiscord } from './discord.js';
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const isHl = a => /^0x[0-9a-f]{40}$/.test(a || '');
-const PER_ACCOUNT = 3, PER_LEAD = 4; // subrequests (copy positions may fall back to 2 calls; HL: 2 clearinghouse + fills + ledger)
+const PER_ACCOUNT = 3, PER_LEAD = 4; // subrequests (copy positions may fall back to 2 calls; HL: 2 clearinghouse + fills + ledger, plus one per extra dex)
 
 async function loadMarkets(deps) {
-  return deps.store.cached('markets', 12 * 3600_000, async () => {
+  return deps.store.cached('markets2', 12 * 3600_000, async () => { // markets2: entries carry alt coins on other builder dexes
     const [sm, meta] = await Promise.all([deps.strike.markets(), deps.hl.meta()]);
-    const mk = buildMarkets(sm, meta.core, meta.xyz);
+    const mk = buildMarkets(sm, meta.core, meta.xyz, meta.other || {});
     return Object.keys(mk).length ? mk : null;
   });
 }
 
-async function readLead(addr, deps, now) {
-  const ch = await deps.hl.clearinghouse(addr);
+async function readLead(addr, deps, now, dexes = []) {
+  const ch = await deps.hl.clearinghouse(addr, dexes);
   const fills = await deps.hl.fillsByTime(addr, now - 30 * 60_000, now);
   const led = await deps.hl.ledger(addr, now - 24 * 3600_000);
   const withdrawn24h = led.filter(u => u.usdc < 0).reduce((s, u) => s - u.usdc, 0);
   return { ch, fills: fills.map(f => ({ coin: f.coin, dir: f.dir, time: f.time, oid: f.oid, liquidation: f.liquidation || null })),
-    withdrawn24h, accountValue: (ch.main?.accountValue || 0) + (ch.xyz?.accountValue || 0) };
+    withdrawn24h, accountValue: Object.values(ch).reduce((t, x) => t + (x?.accountValue || 0), 0) };
 }
 
 const slimFills = f => f.slice(0, 200).map(({ id, symbol, ts, copySubId, autoClose, pnl }) => ({ id, symbol, ts, copySubId, autoClose, pnl }));
@@ -50,6 +50,7 @@ export async function poll(env, deps = null) {
     accounts.get(a.accountId).chats.push(c);
   }
   const mk = (await loadMarkets(d)) || {};
+  const dexes = altDexes(mk), perLead = PER_LEAD + dexes.length;
   const active = await d.store.cachedLeaderboard(() => d.strike.leaderboard({ status: 'active' }));
   budget -= 4;
 
@@ -58,7 +59,7 @@ export async function poll(env, deps = null) {
   const stored = new Map(await Promise.all([...accounts.keys()].map(async id => [id, (await d.store.getAcct(id))?.base || null])));
   const order = [...accounts.keys()].sort((x, y) => (stored.get(x)?.at || 0) - (stored.get(y)?.at || 0));
   for (const id of order) {
-    if (budget < PER_ACCOUNT + PER_LEAD) { accounts.delete(id); res.deferredAccounts = (res.deferredAccounts || 0) + 1; continue; }
+    if (budget < PER_ACCOUNT + perLead) { accounts.delete(id); res.deferredAccounts = (res.deferredAccounts || 0) + 1; continue; }
     const a = accounts.get(id);
     const prev = stored.get(id); prevs.set(id, prev);
     const [copies, fills] = await Promise.all([d.strike.copyPositions(id).catch(() => null), d.strike.fills(id, { limit: 200 }).catch(() => null)]);
@@ -82,9 +83,9 @@ export async function poll(env, deps = null) {
   leadIds.sort((x, y) => lastAt[x] - lastAt[y]);
   const leads = {};
   for (const l of leadIds) {
-    if (budget < PER_LEAD) { res.deferredLeads++; continue; } // undefined = not read this round; detectors skip it
-    budget -= PER_LEAD;
-    try { leads[l] = await readLead(l, d, now); res.leads++; await d.store.putLead(l, { at: now }); }
+    if (budget < perLead) { res.deferredLeads++; continue; } // undefined = not read this round; detectors skip it
+    budget -= perLead;
+    try { leads[l] = await readLead(l, d, now, dexes); res.leads++; await d.store.putLead(l, { at: now }); }
     catch (e) { leads[l] = null; res.skippedLeads++; if (!(e instanceof HlBusyError)) console.log({ leadError: e?.name || 'error' }); }
     if (gap) await sleep(gap);
   }
