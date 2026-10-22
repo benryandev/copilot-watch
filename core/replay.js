@@ -8,9 +8,12 @@
 // - Taker fee per side; closes land SLIP (10 bp) worse. Open copies are marked at 1h candle closes between orders.
 // - Liquidation: each candle's low (longs) or high (shorts) against Strike's maintenance margin tier. Isolated: the copy's
 //   margin is lost. Cross: every copy closes when equity at the worst price falls to the summed maintenance.
-// Not modelled: funding, Strike's liquidation fee.
+// - Funding (optional `funding`): Strike's hourly rates per market, settled on the copy's size at each hourly mark; longs
+//   pay a positive rate, shorts receive it. Isolated funding comes out of (or into) the position's margin.
+// Not modelled: Strike's liquidation fee. Parity with Copilot holds with funding off (Copilot has none).
 import { tier, hlMap } from './markets.js';
 import * as hl from './hl.js';
+import { fundingHistory } from './strike.js';
 
 export const SLIP = 0.0010;
 export const DAY = 86_400_000;
@@ -75,14 +78,15 @@ export const frSize = (amount, equity, mult = 1, minEntry = 0) => (q, px, t) => 
  * @param {number} [a.tcap] max total margin (0 = none)
  * @param {Set<string>} [a.excluded] Strike symbols not copied
  * @param {'isolated'|'cross'} [a.marginMode]
+ * @param {Record<string, [number, number][]>|null} [a.funding] Strike symbol -> sorted [ms, hourly rate]; null = no funding
  * @param {object[]|null} [a.log] if given, every copy event is pushed here: {t, sym, kind: 'open'|'add'|'close'|'skip'|'liq', why?, px, q?, pnl?}
  */
-export function replay({ orders, marks, start, size, lev, fee, cap = 0, tcap = 0, excluded = new Set(), mk, marginMode = 'isolated', log = null }) {
+export function replay({ orders, marks, start, size, lev, fee, cap = 0, tcap = 0, excluded = new Set(), mk, marginMode = 'isolated', funding = null, log = null }) {
   // Plain objects keyed by Strike symbol keep insertion order, like Copilot's defaultdicts; `g` is a defaultdict read.
   const lp = {}, cq = {}, ce = {}, mg = {}, lots = {}, symPk = {}, last = {}, n = {};
   const g = (o, k) => (k in o ? o[k] : (o[k] = 0));
   let cash = start, pk = start, dd = 0, low = start, usedPk = 0, realised = 0, fees = 0, vol = 0, wiped = null;
-  let entriesPk = 0, liqLoss = 0; const liqs = [];
+  let entriesPk = 0, liqLoss = 0, paid = 0; const liqs = [], fi = {};
   const ev = orders.map(o => [o.t, 1, o]).concat(marks.map(m => [m[0], 0, m])).sort((a, b) => a[0] - b[0] || a[1] - b[1]);
   const live = () => Object.keys(cq).filter(k => cq[k]);
   const eqf = () => { let s = 0; for (const k of live()) s += cq[k] * (last[k] - ce[k]); return cash + s; };
@@ -121,6 +125,15 @@ export function replay({ orders, marks, start, size, lev, fee, cap = 0, tcap = 0
     let c;
     if (kind === 0) {
       const [, sym, p, lo, hi] = o; c = sym;
+      const fr = funding?.[c];
+      if (fr) {  // settle every funding hour up to this mark (hours before the copy opened pass with nothing held)
+        let i = fi[c] || 0;
+        for (; i < fr.length && fr[i][0] <= t; i++) if (g(cq, c)) {
+          const pay = -cq[c] * p * fr[i][1];
+          cash += pay; realised += pay; paid += pay; if (marginMode === 'isolated') mg[c] += pay;
+        }
+        fi[c] = i;
+      }
       if (g(cq, c)) {
         const worst = cq[c] > 0 ? lo : hi;
         if (marginMode === 'isolated') {
@@ -167,7 +180,7 @@ export function replay({ orders, marks, start, size, lev, fee, cap = 0, tcap = 0
   const { taken = 0, ...skipped } = n;
   return {
     net: eq - start, realised, open: eq - start - realised, dd, ddPct: start ? dd / start : 0, low,
-    peakMargin: usedPk, peakEntries: entriesPk, symPk, fees, volume: vol, wiped, taken, skipped, lev, marginMode,
+    peakMargin: usedPk, peakEntries: entriesPk, symPk, fees, funding: paid, volume: vol, wiped, taken, skipped, lev, marginMode,
     liquidations: liqs.length, liqLoss, liqList: liqs,
     openNow: Object.fromEntries(live().map(k => [k, Math.round(cq[k] * last[k])])),
   };
@@ -176,9 +189,10 @@ export function replay({ orders, marks, start, size, lev, fee, cap = 0, tcap = 0
 /**
  * Fetch everything needed to replay one Hyperliquid wallet over the last `days`, within a budget: at most `maxPages`
  * fill pages (2,000 each) and 1h candles for the `maxCoins` most-traded symbols (by notional). Calls are sequential.
- * @returns {Promise<{orders, marks, equityHistory: number[][], fills: {coin, time, closedPnl}[], nfills: number, truncated: boolean, unmarked: string[], t0: number, now: number}>}
+ * Funding comes from Strike (`funding: false` skips it).
+ * @returns {Promise<{orders, marks, funding: Record<string, [number, number][]>, equityHistory: number[][], fills: {coin, time, closedPnl}[], nfills: number, truncated: boolean, unmarked: string[], t0: number, now: number}>}
  */
-export async function fetchLead(addr, days, mk, { fetch, onProgress = null, maxPages = 10, maxCoins = 12, now = Date.now(), pause = 250 } = {}) {
+export async function fetchLead(addr, days, mk, { fetch, onProgress = null, maxPages = 10, maxCoins = 12, now = Date.now(), pause = 250, funding = true, fundingCache = null } = {}) {
   const user = addr.toLowerCase(); const t0 = now - Math.trunc(days * DAY);
   const fills = await hl.fillsByTime(user, t0, now, { maxPages, fetch, pause, onPage: (page, pages) => onProgress?.({ step: 'fills', page, pages }) });
   const orders = hlToOrders(fills, mk);
@@ -192,6 +206,14 @@ export async function fetchLead(addr, days, mk, { fetch, onProgress = null, maxP
     onProgress?.({ step: 'candles', page: i + 1, pages: keep.length, sym: s });
     for (const k of await hl.candles(mk[s].hl, t0, now, { fetch })) marks.push([k.T, s, k.c, k.l, k.h]);
   }
+  // Strike's hourly funding for the same markets (one public call each; a shared cache serves many trials in one run).
+  const fund = {};
+  if (funding && keep.length) {
+    onProgress?.({ step: 'funding', page: 1, pages: 1 });
+    const get = s => { if (!fundingCache) return fundingHistory(s, { fetch }); if (!fundingCache.has(s)) fundingCache.set(s, fundingHistory(s, { fetch })); return fundingCache.get(s); };
+    const rows = await Promise.all(keep.map(get));
+    keep.forEach((s, i) => { if (rows[i].length) fund[s] = rows[i].filter(r => r[0] >= t0 - 3_600_000); });
+  }
   let equityHistory = [];
   if (orders.length) {
     if (pause) await sleep(pause);
@@ -200,5 +222,5 @@ export async function fetchLead(addr, days, mk, { fetch, onProgress = null, maxP
   }
   // Slim fills (every coin, listed or not) for realised P&L by coin.
   const slim = fills.map(f => ({ coin: f.coin, time: f.time, closedPnl: F(f.closedPnl || 0) }));
-  return { orders, marks, equityHistory, fills: slim, nfills: fills.length, truncated: fills.truncated, unmarked, t0, now };
+  return { orders, marks, funding: fund, equityHistory, fills: slim, nfills: fills.length, truncated: fills.truncated, unmarked, t0, now };
 }

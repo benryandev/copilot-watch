@@ -74,3 +74,14 @@ export async function fills(accountId, { limit = 200, fetch, tries } = {}) {
   return r.fills.map(f => ({ id: String(f.id), symbol: f.symbol, side: f.side, size: F(f.size), price: F(f.price), ts: f.timestamp,
     pnl: F(f.realized_pnl || 0), copySubId: tagSub(f.client_order_id), autoClose: f.auto_close_type || null }));
 }
+
+/**
+ * Hourly funding rates for one market over the last 90 days (the only window the endpoint honours; other `days` give 30)
+ * -> [[ms, rate]] sorted by time, rates per hour (+ = longs pay). [] when Strike has no history for it or the call fails.
+ */
+export async function fundingHistory(symbol, { fetch } = {}) {
+  const d = await strikeGet(`/stat/v1/stats/coin/history/funding?symbol=${q(symbol)}&days=90`, { fetch });
+  const ti = d.columns?.indexOf('ts') ?? -1, ri = d.columns?.indexOf('funding_rate') ?? -1;
+  if (ti < 0 || ri < 0 || !Array.isArray(d.data)) return [];
+  return d.data.map(r => [F(r[ti]), F(r[ri])]).filter(([t, r]) => Number.isFinite(t) && Number.isFinite(r)).sort((a, b) => a[0] - b[0]);
+}
