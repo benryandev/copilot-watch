@@ -20,6 +20,10 @@ Built during the Strike Finance hackathon (22–24 Oct 2026). Not affiliated wit
 | `/paper <0x wallet> [size]` | Paper copy a Hyperliquid wallet before copying it for real (no money); `/paper` alone lists this chat's paper copies. A summary arrives daily at 08:00 Brisbane time; the trial page is on [Copilot Check](https://strike.benryan.com.au). |
 | `/stop` | Stop everything here and delete this chat's data |
 
+![Copilot Watch alerts in Telegram: a copy 1.9% from liquidation, a copy that would be liquidated before the lead, and a lead trade that wasn't copied](docs/img/alerts.png)
+
+<sub>Sample alerts in the bot's own wording; the numbers are examples and the lead address is made up.</sub>
+
 ## Alerts
 
 Checked about every 2 minutes. Each alert fires once per event (a near-liquidation alert can repeat after 6 hours), and says what happened plus the plain options. The first check after `/watch` only records a baseline, so history never triggers alerts.
