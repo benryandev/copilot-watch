@@ -1,6 +1,8 @@
 // Paper Copy trials: settings + a start time, stored in KV for 30 days. Whoever views a trial replays the lead's real
 // fills from the start with core/replay.js; nothing runs in the background except the optional daily bot summary.
 
+import { bump } from './store.js';
+
 export const PAGE = 'https://strike.benryan.com.au/paper/';
 export const ORIGINS = ['https://strike.benryan.com.au', 'http://localhost:8080'];
 export const TTL = 30 * 86400, BACKDATE_DAYS = 14, MAX_TRIALS = 500, MAX_PER_CHAT = 3;
@@ -70,6 +72,7 @@ export async function handlePaperApi(req, env, { now = Date.now(), limiter = env
     const p = parseTrial(body, now);
     if (!p.ok) return json({ error: p.error }, 400, origin);
     const r = await createTrial(env.KV, p.trial);
+    if (!r.error) await bump(env.KV, 'paper_check', now);
     return r.error ? json({ error: r.error }, 503, origin) : json(r, 201, origin);
   }
   const m = url.pathname.match(/^\/api\/paper\/([^/]+)$/);

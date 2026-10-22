@@ -1,8 +1,11 @@
 // Platform-neutral commands. Transports turn messages into {platform, chatId, guildId, userId, isAdmin, name, args} and send back a Reply.
 import { T } from './text.js';
 import { resolveWatchTarget } from './resolve.js';
-import { chatKey } from './store.js';
+import { chatKey, bump } from './store.js';
 import { parseTrial, createTrial, getTrial, MAX_PER_CHAT, PAGE } from './paper.js';
+
+/** /start payloads counted as arrivals (Telegram deep links: t.me/CopilotWatchBot?start=check). */
+export const SOURCES = ['check', 'copilot'];
 
 export const MAX_ACCOUNTS = 5, MAX_CHANNELS_PER_GUILD = 3, MAX_CHATS = 300, MAX_WATCHED = 300, MAX_DC_PER_USER = 3;
 
@@ -24,7 +27,9 @@ export async function handleCommand(cmd, deps) {
   const args = (cmd.args || []).map(a => String(a)).filter(Boolean);
 
   switch (cmd.name) {
-    case 'start': return { text: T.start };
+    case 'start':
+      if (SOURCES.includes(args[0])) await bump(deps.kv || deps.env?.KV, `from_${args[0]}`, now());
+      return { text: T.start };
     case 'help': return { text: T.help };
 
     case 'watch': {
@@ -47,6 +52,7 @@ export async function handleCommand(cmd, deps) {
       const next = chat || { platform: cmd.platform, chatId: cmd.chatId, guildId: cmd.guildId || null, ownerUserId: cmd.userId, accounts: [], settings: { liq: 5 }, createdAt: now() };
       next.accounts = [...have, ...add];
       await store.putChat(next);
+      if (!chat) await bump(deps.kv || deps.env?.KV, `chat_${cmd.platform}`, now());
       const rows = await store.cachedLeaderboard(() => strike.leaderboard()).catch(() => []);
       const lines = [];
       for (const a of r.accounts) {
@@ -108,6 +114,8 @@ export async function handleCommand(cmd, deps) {
       const next = chat || { platform: cmd.platform, chatId: cmd.chatId, guildId: cmd.guildId || null, ownerUserId: cmd.userId, accounts: [], settings: { liq: 5 }, createdAt: now() };
       next.trials = [...live.map(t => t.id), r.id];
       await store.putChat(next);
+      await bump(kv, 'paper_bot', now());
+      if (!chat) await bump(kv, `chat_${cmd.platform}`, now());
       return { text: T.paperMade(p.trial, r.url) };
     }
 
@@ -117,6 +125,7 @@ export async function handleCommand(cmd, deps) {
       const kv = deps.kv || deps.env?.KV;
       for (const id of chat.trials || []) if (kv) await kv.delete(`paper:${id}`);
       await store.deleteChat(key);
+      await bump(kv, 'stop', now());
       return { text: T.stopped };
     }
 

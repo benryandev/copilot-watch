@@ -10,6 +10,7 @@
 - Per chat: Telegram chat id or Discord channel and server ids, the user id that set the watch, the accounts watched, the alert threshold.
 - Per watched account: the last open copies and fill ids seen (public data), to detect changes.
 - Alert cool-down markers (expire after 6–24 hours) and, only when Telegram or Discord rejects a send, the alert text for up to an hour so it can be resent.
+- Daily usage totals (new chats, `/stop`s, paper copies made, arrivals from a Copilot Check or Strike Copilot link) as plain numbers with no ids, kept 400 days.
 - `/stop` deletes the chat's data; an account nobody watches any more is deleted with it. Logs record counts only.
 
 ## How requests are checked

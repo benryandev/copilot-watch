@@ -66,3 +66,14 @@ test('global distinct-account cap', async () => {
   const d = setup(); d.store.countAccts = async () => 300;
   assert.match((await handleCommand(tg('watch', [ADDR], '55'), d)).text, /at its limit/);
 });
+test('daily counts: new chat, /start source, bot paper copy, stop; no ids in the keys', async () => {
+  const kv = memKV(); const d = { store: createStore(kv), strike: fakeStrike(), kv, now: () => Date.UTC(2026, 9, 23, 5) };
+  await handleCommand(tg('start', ['check']), d);
+  await handleCommand(tg('start', ['somewhere']), d);
+  await handleCommand(tg('watch', [ADDR, 'Sub1']), d);
+  await handleCommand(tg('watch', [ADDR, 'Demo']), d); // same chat: not a new one
+  await handleCommand(tg('paper', ['0x' + 'a'.repeat(40)]), d);
+  await handleCommand(tg('stop'), d);
+  const stats = Object.fromEntries([...kv.m.keys()].filter(k => k.startsWith('stat:')).map(k => [k, Number(kv.m.get(k).v)]));
+  assert.deepEqual(stats, { 'stat:from_check:2026-10-23': 1, 'stat:chat_tg:2026-10-23': 1, 'stat:paper_bot:2026-10-23': 1, 'stat:stop:2026-10-23': 1 });
+});

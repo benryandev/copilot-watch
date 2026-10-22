@@ -5,8 +5,19 @@
 //   cool:<chatKey>:<alertKey>   1, expires (A1 6 h, others 24 h)
 //   rate:<chatKey>:<minute>     count, expires after 2 minutes
 //   cache:leaderboard  {at, rows}
+//   stat:<name>:<YYYY-MM-DD>   daily count (no ids), expires after 400 days; see scripts/stats.mjs
 
 export const chatKey = (platform, chatId) => `chat:${platform}:${chatId}`;
+
+/** Add 1 to today's (UTC) count for `name`. Counts only, never ids; a failed write is ignored so it can't break a command. */
+export async function bump(kv, name, now = Date.now()) {
+  if (!kv) return;
+  try {
+    const k = `stat:${name}:${new Date(now).toISOString().slice(0, 10)}`;
+    const n = (Number(await kv.get(k)) || 0) + 1;
+    await kv.put(k, String(n), { expirationTtl: 400 * 86400, metadata: { n } }); // metadata lets a key listing read counts without a get each
+  } catch { /* counts are best effort */ }
+}
 
 export function createStore(kv, { now = () => Date.now() } = {}) {
   const getJ = k => kv.get(k, 'json');

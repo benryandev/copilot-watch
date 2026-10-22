@@ -67,7 +67,7 @@ State lives in Workers KV. `core/` (HTTP with backoff, Strike and Hyperliquid cl
 
 ## Privacy
 
-Stored per chat: the Telegram chat id or Discord channel and server ids, the user id that set the watch (Discord permissions), the accounts watched, the alert threshold, and per account the last 200 fill ids and open copies seen (public data). Alert text is stored only when Telegram or Discord can't take it, for up to an hour so it can be resent; logs carry counts only. `/stop` deletes the chat's data; accounts no longer watched by anyone are deleted with it.
+Stored per chat: the Telegram chat id or Discord channel and server ids, the user id that set the watch (Discord permissions), the accounts watched, the alert threshold, and per account the last 200 fill ids and open copies seen (public data). Alert text is stored only when Telegram or Discord can't take it, for up to an hour so it can be resent; logs carry counts only. `/stop` deletes the chat's data; accounts no longer watched by anyone are deleted with it. Usage is kept as daily totals with no ids attached (new chats, `/stop`s, paper copies made, arrivals from the Copilot Check link), for 400 days.
 
 ## Limits
 
@@ -86,6 +86,7 @@ pnpm deploy
 node scripts/set-telegram.mjs  # webhook, commands, description
 node scripts/register-discord.mjs --guild <id>   # or --global
 node scripts/register-discord.mjs --set-endpoint https://<worker>/discord
+node scripts/stats.mjs         # usage counts (no ids)
 ```
 
 Tokens are read from `.secrets/` (git-ignored) and never printed.

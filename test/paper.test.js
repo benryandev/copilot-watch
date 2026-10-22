@@ -60,3 +60,9 @@ test('parseTrial defaults', () => {
   const p = parseTrial({ lead: W, settings: { mode: 'fr', amount: 500, lev: 3 } }, NOW);
   assert.deepEqual(p.trial.settings, { mode: 'fr', amount: 500, lev: 3, marginMode: 'isolated', cap: 0, tcap: 0, excluded: [], start: 1000 });
 });
+test('a paper copy made from the site adds to the daily paper_check count; a refused one does not', async () => {
+  const e = env();
+  await handlePaperApi(post(ok), e, { now: NOW });
+  await handlePaperApi(post({ lead: 'nope' }), e, { now: NOW });
+  assert.equal(await e.KV.get('stat:paper_check:2026-10-22'), '1');
+});
