@@ -40,6 +40,10 @@ Checked about every 2 minutes. Each alert fires once per event (a near-liquidati
 | A6 | Copy liquidated or ended | A copy fill closed by liquidation or auto-deleverage, or the subscription changed to liquidated or stopped. |
 | A7 | Copy liquidated before the lead | The copy is within 20% of liquidation and would be liquidated at least 2% (of mark) before the lead's own isolated position on that market, usually because the lead added margin after opening (Strike copies the leverage setting, not added margin). Gives the margin that would match the lead's liquidation price. Cross positions are left out: their liquidation depends on the lead's whole account, which A4 watches. |
 
+### Acting on an alert
+
+Copilot Watch only alerts. Acting would need your Strike API key, and Strike keys can trade with no read-only option, so the bot never asks for one. You act in the Strike app, or pair it with [Strike Copilot](https://github.com/benryandev/strike-copilot), which runs on your own computer with your key. It can add margin to an isolated copy (showing the new liquidation price first), tighten caps or stop the copy, and only after you say yes to each change.
+
 ## How it uses Strike
 
 Public, unauthenticated reads only. Copilot Watch never asks for an API key: Strike keys can trade and have no read-only scope.
