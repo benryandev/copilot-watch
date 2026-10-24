@@ -23,9 +23,9 @@ test('A1 fires at 5% and again at 2%, not at 6%', () => {
   const short = run(snap(), snap({ copies: [copy('BTC-USD', 'short', { liq: 104 })] })).filter(a => a.kind === 'A1');
   assert.equal(short.length, 1); assert.match(short[0].text, /4\.0% from liquidation \(mark 100, liquidation 104\)/);
 });
-test('A1 on a stock/commodity mentions market hours', () => {
+test('A1 on a stock/commodity says the price keeps moving when the market is closed', () => {
   const a = run(snap(), snap({ copies: [copy('XAU-USD', 'long', { liq: 97 })] })).find(a => a.kind === 'A1');
-  assert.match(a.text, /pause outside market hours/);
+  assert.match(a.text, /price keeps moving and can jump when it reopens/);
 });
 test('A2 needs two polls in a row; opposite side counts', () => {
   const leads = { [L]: leadState([{ coin: 'BTC', szi: -1 }]) };

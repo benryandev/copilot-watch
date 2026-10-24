@@ -32,7 +32,7 @@ Checked about every 2 minutes. Each alert fires once per event (a near-liquidati
 
 | | Alert | When |
 |---|---|---|
-| A1 | Copy near liquidation | Mark within the set % of the copy's liquidation price, again at 2%. Stock and commodity markets add a note that prices pause outside market hours. |
+| A1 | Copy near liquidation | Mark within the set % of the copy's liquidation price, again at 2%. Stock and commodity markets add a note that Strike's price keeps moving while the real market is closed and can jump when it reopens. |
 | A2 | Orphaned copy | The copy is still open but the lead holds nothing on that market, or holds the opposite side, in two checks in a row. If the lead was liquidated there, the alert says so. |
 | A3 | Missed copy | The lead opened or added on a market Strike lists and this account has no copy fill for it within 10 minutes (likely caps, balance or a leverage lock). At most one per market per hour. |
 | A4 | Lead close to liquidation | The lead's Hyperliquid cross maintenance margin reaches 60% of account value (Hyperliquid liquidates at 100%), on either the crypto or the stock/commodity account. |

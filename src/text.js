@@ -56,7 +56,7 @@ export const T = {
   statusTail: liq => `Liquidation alerts at ${liq}% and 2%. Data from Strike's public API; the copy list can lag up to 10 minutes.`,
 };
 
-const OFF_HOURS = 'Stock and commodity prices pause outside market hours, so the next open can gap.';
+const OFF_HOURS = "The real market is closed outside its trading hours, but Strike's price keeps moving and can jump when it reopens.";
 
 /** Alert wording. Each takes the facts and returns plain text. */
 export const A = {
