@@ -20,7 +20,7 @@ export async function runTrial(t, mk, { now = Date.now(), fetch, maxPages = 3, m
 }
 
 export const trialLine = (t, r, lang = 'en') => {
-  const since = new Date(t.from).toLocaleDateString(lang === 'zh' ? 'zh-CN' : 'en-AU', { day: 'numeric', month: lang === 'zh' ? 'long' : 'short', timeZone: 'Australia/Brisbane' });
+  const since = new Date(t.from).toLocaleDateString(lang === 'zh' ? 'zh-CN' : lang === 'zh-Hant' ? 'zh-TW' : 'en-AU', { day: 'numeric', month: lang.startsWith('zh') ? 'long' : 'short', timeZone: 'Australia/Brisbane' });
   return texts(lang).T.trialLine(t, r, since, PAGE);
 };
 

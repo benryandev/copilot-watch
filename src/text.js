@@ -16,9 +16,9 @@ export const T = {
   start: 'Copilot Watch sends alerts about Strike copy trades. It reads public data only and never asks for a key.\n\n' +
     'Send /watch with a Strike address (addr1…), a nickname or a sub-account ID. Add a sub-account name after an address to watch only that one, e.g. /watch addr1… Sub1.\n\n' +
     'Alerts: a copy near liquidation, a copy the lead has already closed, a lead trade that wasn\'t copied, a copy that would be liquidated before the lead, a lead using most of their margin, a lead withdrawing most of their funds, and a copy closed by liquidation.\n\n' +
-    'Commands: /status, /settings liq=5, /unwatch <account>, /paper <0x wallet> (try a copy on paper first), /lang zh (中文), /stop.\n\n' +
+    'Commands: /status, /settings liq=5, /unwatch <account>, /paper <0x wallet> (try a copy on paper first), /lang zh (简体中文) or /lang tw (繁體中文), /stop.\n\n' +
     'Stored: this chat\'s id, the accounts you watch and the last fills seen. /stop deletes all of it. ' + DISCLAIMER,
-  help: 'Commands:\n/watch <addr1, nickname or sub-account ID> [sub-account name]\n/status: open copies and how close each is to liquidation\n/settings liq=5: alert when a copy is within this % of liquidation (1 to 20)\n/unwatch <account>: stop watching one account\n/paper <0x wallet> [size]: paper copy a Hyperliquid wallet (no money)\n/lang en|zh: language (English or 中文)\n/stop: stop everything and delete this chat\'s data\n\nSub-account IDs: Strike app, Sub-accounts page, Account ID column, copy button.',
+  help: 'Commands:\n/watch <addr1, nickname or sub-account ID> [sub-account name]\n/status: open copies and how close each is to liquidation\n/settings liq=5: alert when a copy is within this % of liquidation (1 to 20)\n/unwatch <account>: stop watching one account\n/paper <0x wallet> [size]: paper copy a Hyperliquid wallet (no money)\n/lang en|zh|tw: language (English, 简体中文 or 繁體中文)\n/stop: stop everything and delete this chat\'s data\n\nSub-account IDs: Strike app, Sub-accounts page, Account ID column, copy button.',
   dmOnly: 'Copilot Watch works in direct messages only. Open a chat with the bot and send /start.',
   rate: 'Too many commands, try again in a minute.',
   full: 'Copilot Watch is at its limit of watched chats for now (it is a hackathon prototype). Try again later.',
@@ -54,8 +54,8 @@ export const T = {
   statusNone: 'no open copies.',
   statusLine: p => `${mkt(p.market)} ${p.side} ${p.leverage}x: P&L ${usd(p.pnl, true)}, ${p.dist == null ? 'no liquidation price' : `${pct(p.dist)} from liquidation`}${p.leadId ? `, lead ${short(p.leadId)}` : ''}`,
   statusTail: liq => `Liquidation alerts at ${liq}% and 2%. Data from Strike's public API; the copy list can lag up to 10 minutes.`,
-  langSet: 'Language set to English. /lang zh switches to Chinese (中文).',
-  langBad: 'Use /lang en (English) or /lang zh (中文).',
+  langSet: 'Language set to English. /lang zh switches to 简体中文, /lang tw to 繁體中文.',
+  langBad: 'Use /lang en (English), /lang zh (简体中文) or /lang tw (繁體中文).',
   dailyHead: 'Daily paper copy update:',
   trialLine: (t, r, since, page) => {
     const s = t.settings, mode = s.mode === 'fm' ? `fixed margin ${usd(s.amount)}` : `fixed ratio ${usd(s.amount)}`;

@@ -14,7 +14,7 @@ export const TZ = {
     '提醒内容：跟单仓位接近强平、带单员已经平仓但跟单仍在持有、带单员的交易没有被跟单、跟单仓位会比带单员更早被强平、带单员用掉了大部分保证金、带单员转走了大部分资金，以及跟单仓位被强平。\n\n' +
     '命令：/status、/settings liq=5、/unwatch <账户>、/paper <0x 钱包>（先用模拟跟单试一试）、/lang en（切换到英文）、/stop。\n\n' +
     '我们保存的内容：本聊天的 ID、你关注的账户和最近看到的成交记录。/stop 会全部删除。' + DISCLAIMER_ZH,
-  help: '命令：\n/watch <addr1、昵称或子账户 ID> [子账户名称]\n/status：当前的跟单仓位，以及各自距离强平还有多远\n/settings liq=5：跟单仓位距离强平价在这个百分比以内时提醒（1 到 20）\n/unwatch <账户>：停止关注某个账户\n/paper <0x 钱包> [金额]：模拟跟单一个 Hyperliquid 钱包（不用真钱）\n/lang en|zh：切换语言（English 或中文）\n/stop：停止全部提醒，并删除本聊天的数据\n\n子账户 ID：在 Strike 应用的子账户页面，Account ID 一栏，点复制按钮。',
+  help: '命令：\n/watch <addr1、昵称或子账户 ID> [子账户名称]\n/status：当前的跟单仓位，以及各自距离强平还有多远\n/settings liq=5：跟单仓位距离强平价在这个百分比以内时提醒（1 到 20）\n/unwatch <账户>：停止关注某个账户\n/paper <0x 钱包> [金额]：模拟跟单一个 Hyperliquid 钱包（不用真钱）\n/lang en|zh|tw：切换语言（English、简体中文或繁體中文）\n/stop：停止全部提醒，并删除本聊天的数据\n\n子账户 ID：在 Strike 应用的子账户页面，Account ID 一栏，点复制按钮。',
   dmOnly: 'Copilot Watch 只能在私聊中使用。请和机器人开一个私聊，然后发送 /start。',
   rate: '命令太频繁了，请一分钟后再试。',
   full: 'Copilot Watch 目前关注的聊天数量已达上限（这是一个黑客松原型）。请稍后再试。',
@@ -50,8 +50,8 @@ export const TZ = {
   statusNone: '没有跟单仓位。',
   statusLine: p => `${mkt(p.market)} ${side(p.side)} ${p.leverage} 倍：盈亏 ${usd(p.pnl, true)}，${p.dist == null ? '没有强平价' : `距离强平 ${pct(p.dist)}`}${p.leadId ? `，带单员 ${short(p.leadId)}` : ''}`,
   statusTail: liq => `在 ${liq}% 和 2% 时提醒强平风险。数据来自 Strike 的公开 API；跟单列表最多可能延迟 10 分钟。`,
-  langSet: '语言已切换为中文。发送 /lang en 可切换回英文。',
-  langBad: '请使用 /lang en（English）或 /lang zh（中文）。',
+  langSet: '语言已切换为简体中文。发送 /lang en 可切换回英文，/lang tw 可切换为繁體中文。',
+  langBad: '请使用 /lang en（English）、/lang zh（简体中文）或 /lang tw（繁體中文）。',
   dailyHead: '每日模拟跟单更新：',
   trialLine: (t, r, since, page) => `${short(t.lead)} 的模拟跟单（${mode(t.settings.mode)} ${usd(t.settings.amount)}，${t.settings.lev} 倍${margin(t.settings.marginMode)}）：自 ${since} 起 ${usd(r.net, true)}，最大回撤 ${usd(r.dd)}，强平 ${r.liquidations} 次，已跟单 ${r.taken} 笔开仓。${page}${t.id}`,
   trialBusy: (t, page) => `${short(t.lead)} 的模拟跟单：Hyperliquid 繁忙，今天没有更新。${page}${t.id}`,
