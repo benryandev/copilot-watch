@@ -88,7 +88,7 @@ test('/lang tw sets traditional; a zh-TW Telegram user gets traditional replies 
   const r = await handleCommand(tg('watch', [ADDR]), d);
   assert.match(r.text, /正在關注：/); assert.equal((await d.store.getChat('chat:tg:1')).settings.lang, 'zh-Hant');
   const d2 = setup();
-  assert.match((await handleCommand(tg('help', [], 'zh-Hant'), d2)).text, /子帳戶 ID：在 Strike App 的子帳戶頁面/);
+  assert.match((await handleCommand(tg('help', [], 'zh-Hant'), d2)).text, /子帳戶 ID：開啟 Strike App，進入 Sub-accounts（子帳戶）頁面/);
   const L = '0xlead000000000000000000000000000000000001', NOW = Date.UTC(2026, 9, 22, 3, 0);
   const mk = { 'BTC-USD': { hl: 'BTC', tiers: [[1e18, 10, 0.025, 0]] } };
   const snap = (o = {}) => ({ accountId: 'acc', label: 'Sub1', at: NOW, since: NOW - 3600_000, copies: [], subs: { [L]: { status: 'active' } }, fills: [], orphans: [], ...o });
@@ -100,4 +100,11 @@ test('traditional text uses Taiwan/Hong Kong terms, not simplified ones', () => 
   const all = [...Object.values(TH).map(v => typeof v === 'function' ? '' : v), TH.help, TH.start].join('');
   for (const w of ['账', '设置', '默认', '服务器', '信息', '布里斯班']) assert.ok(!all.includes(w), w);
   for (const w of ['帳戶', '設定', '預設', '伺服器', '布里斯本']) assert.ok(all.includes(w) || TH.paperMade({ lead: '0x1', settings: { amount: 1, lev: 1, start: 1 } }, '').includes(w) || TH.paperHelp.includes(w), w);
+});
+test('traditional wording from Leo\'s review: trial line date, A3, A5, /start lists all three languages', () => {
+  const t = { id: 'abc', lead: '0x1234567890abcdef1234567890abcdef12345678', from: Date.UTC(2026, 9, 12, 6), settings: { mode: 'fm', amount: 50, lev: 5, marginMode: 'isolated' } };
+  assert.match(trialLine(t, { net: 123.4, dd: 40, liquidations: 1, taken: 9 }, 'zh-Hant'), /0x1234…5678 的模擬跟單（固定保證金 \$50，5 倍逐倉）：自 10 月 12 日起累計 \+\$123，最大回撤 \$40，曾發生 1 次強平，已跟單 9 筆開倉。/);
+  assert.match(AH.A3('Alice / Sub1', '0x1234567890abcdef1234567890abcdef12345678', 'ETH-USD', 'long'), /帶單員 0x1234…5678 在 ETH 上開立或加倉多單已超過 10 分鐘/);
+  assert.match(AH.A5('0x1234567890abcdef1234567890abcdef12345678', 250000, 400000), /在過去 24 小時內從 Hyperliquid 帳戶轉出了 \$250,000（該帳戶原本約有 \$400,000）/);
+  assert.match(TH.start, /\/lang tw（切換為繁體中文）/); assert.match(TZ.start, /\/lang tw/);
 });

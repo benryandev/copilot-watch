@@ -12,7 +12,7 @@ export const TZ = {
   start: 'Copilot Watch 会就 Strike 的跟单交易发送提醒。它只读取公开数据，绝不会向你索要密钥。\n\n' +
     '发送 /watch 加上 Strike 地址（addr1…）、昵称或子账户 ID。在地址后面加上子账户名称，可以只关注这个子账户，例如 /watch addr1… Sub1。\n\n' +
     '提醒内容：跟单仓位接近强平、带单员已经平仓但跟单仍在持有、带单员的交易没有被跟单、跟单仓位会比带单员更早被强平、带单员用掉了大部分保证金、带单员转走了大部分资金，以及跟单仓位被强平。\n\n' +
-    '命令：/status、/settings liq=5、/unwatch <账户>、/paper <0x 钱包>（先用模拟跟单试一试）、/lang en（切换到英文）、/stop。\n\n' +
+    '命令：/status、/settings liq=5、/unwatch <账户>、/paper <0x 钱包>（先用模拟跟单试一试）、/lang en（切换到英文）、/lang tw（切换到繁體中文）、/stop。\n\n' +
     '我们保存的内容：本聊天的 ID、你关注的账户和最近看到的成交记录。/stop 会全部删除。' + DISCLAIMER_ZH,
   help: '命令：\n/watch <addr1、昵称或子账户 ID> [子账户名称]\n/status：当前的跟单仓位，以及各自距离强平还有多远\n/settings liq=5：跟单仓位距离强平价在这个百分比以内时提醒（1 到 20）\n/unwatch <账户>：停止关注某个账户\n/paper <0x 钱包> [金额]：模拟跟单一个 Hyperliquid 钱包（不用真钱）\n/lang en|zh|tw：切换语言（English、简体中文或繁體中文）\n/stop：停止全部提醒，并删除本聊天的数据\n\n子账户 ID：在 Strike 应用的子账户页面，Account ID 一栏，点复制按钮。',
   dmOnly: 'Copilot Watch 只能在私聊中使用。请和机器人开一个私聊，然后发送 /start。',
