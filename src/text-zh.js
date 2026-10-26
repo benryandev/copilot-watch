@@ -57,33 +57,37 @@ export const TZ = {
   trialBusy: (t, page) => `${short(t.lead)} 的模拟跟单：Hyperliquid 繁忙，今天没有更新。${page}${t.id}`,
 };
 
-const OFF_HOURS_ZH = '这个市场的现实交易时段已经收盘，但 Strike 的价格仍会变动，重新开市时可能跳空。';
+const OFF_HOURS_ZH = '这是股票或商品合约：相关标的市场收盘后，Strike 上的价格仍可能变动，并可能在市场重新开盘时出现跳空。';
+
+const why2 = (c, why) => (why.flip ? `现在持有的是${side(why.flip)}` : `已不再持有 ${mkt(c.market)}`);
 
 export const AZ = {
   A1: (label, c, dist, offHours) =>
-    `⚠️ ${label}：${mkt(c.market)} ${side(c.side)}跟单距离强平 ${pct(dist)}（标记价格 ${px(c.mark)}，强平价格 ${px(c.liq)}）。` +
-    `可选：在 Strike 中为这个仓位追加保证金、减仓，或者保持不动。${offHours ? OFF_HOURS_ZH : ''}`,
+    `⚠️ ${label}：你的 ${mkt(c.market)} ${side(c.side)}跟单仓位距离强平 ${pct(dist)}（标记价格 ${px(c.mark)}，强平价格 ${px(c.liq)}）。` +
+    `你可以在 Strike 中为该仓位追加保证金、减仓，或保持现状。${offHours ? OFF_HOURS_ZH : ''}`,
   A2: (label, c, why) =>
-    `${label}：${mkt(c.market)} ${side(c.side)}跟单仍未平仓，但带单员 ${short(c.leadId)} ${why.flip ? `现在改为${side(why.flip)}` : `已经不再持有 ${mkt(c.market)}`}。` +
-    'Strike 并不总会平掉带单员已经退出的跟单。可选：在 Strike 中平仓，或者保留为你自己的仓位。',
+    `${label}：你的 ${mkt(c.market)} ${side(c.side)}跟单仓位仍处于开仓状态，但带单员 ${short(c.leadId)} ${why2(c, why)}。` +
+    '带单员平仓后，Strike 不一定会同步平掉你的跟单仓位。你可以选择在 Strike 中平仓，或继续持有该仓位并自行管理。',
   A2liq: (label, c) =>
-    `${label}：带单员 ${short(c.leadId)} 在 ${mkt(c.market)} 上被强平了。请检查这笔跟单是否已经平仓；它仍显示为持仓中。`,
+    `${label}：带单员 ${short(c.leadId)} 在 ${mkt(c.market)} 上的仓位已被强平，但你的跟单仓位仍显示为持仓中。请在 Strike 中检查它是否已经平仓。`,
   A3: (label, leadId, sym, sd) =>
     `${label}：带单员 ${short(leadId)} 在 10 多分钟前于 ${mkt(sym)} 开了或加了${side(sd)}，但这个账户没有对应的跟单成交（可能是上限、余额或杠杆锁定）。` +
-    '可选：在 Strike 中检查跟单设置，或者保持不动。',
+    '你可以在 Strike 中检查跟单设置，或保持现状。',
   A4: (leadId, dex, ratio) =>
-    `带单员 ${short(leadId)} 在 Hyperliquid 上接近强平${dex === 'main' ? '' : '（股票和商品）'}：维持保证金已占账户价值的 ${pct(ratio * 100)}，Hyperliquid 在 100% 时强平。` +
-    '如果带单员被强平，这些仓位的跟单可能仍会保持开仓。',
+    `带单员 ${short(leadId)} 在 Hyperliquid 上的${dex === 'main' ? '' : '股票及商品'}仓位正接近强平。目前维持保证金比例为 ${pct(ratio * 100)}，达到 100% 时将触发强平。` +
+    '如果带单员被强平，相关仓位的跟单可能仍会保持开仓状态。',
   A5: (leadId, out, before) =>
     `带单员 ${short(leadId)} 在过去一天从 Hyperliquid 账户转出了 ${usd(out)}（原来约有 ${usd(before)}）。` +
     '在固定比例模式下，跟单规模跟随带单员的权益，所以之后的跟单规模可能会变化。',
   A6fill: (label, f, kind) =>
-    `${label}：一笔 ${mkt(f.symbol)} 跟单已被${kind === 'adl' ? '自动减仓（ADL）' : '强平'}（${dayZh(f.ts)}${f.pnl ? `，盈亏 ${usd(f.pnl, true)}` : ''}）。`,
+    `${label}：一笔 ${mkt(f.symbol)} 跟单仓位因${kind === 'adl' ? '自动减仓（ADL）' : '强平'}而平仓（${dayZh(f.ts)}${f.pnl ? `，盈亏：${usd(f.pnl, true)}` : ''}）。`,
   A7: (label, c, dist, lp, leadDist, toMatch, added) =>
-    `${label}：${mkt(c.market)} ${side(c.side)}跟单会比带单员自己的仓位更早被强平。` +
-    `跟单：${c.leverage} 倍，强平价格 ${px(c.liq)}（相距 ${pct(dist)}）。带单员 ${short(c.leadId)}：${lp.lev} 倍逐仓${added ? '，并追加了保证金' : ''}，强平价格 ${px(lp.liqPx)}（相距 ${pct(leadDist)}）。` +
-    (added ? 'Strike 复制的是带单员的杠杆设置，而不是带单员之后追加到仓位上的保证金。' : '') +
-    `可选：${toMatch ? `在 Strike 中为这个仓位追加约 ${usd(toMatch)} 保证金，使强平价格与带单员一致，` : '在 Strike 中为这个仓位追加保证金，'}或者保持不动。`,
+    `${label}：你的 ${mkt(c.market)} ${side(c.side)}跟单仓位会比带单员自己的仓位更早被强平。\n` +
+    `你的跟单仓位：${c.leverage} 倍杠杆，强平价格为 ${px(c.liq)}（距离强平价格 ${pct(dist)}）。\n` +
+    `带单员 ${short(c.leadId)}：${lp.lev} 倍逐仓${added ? '，且已追加保证金' : ''}，强平价格为 ${px(lp.liqPx)}（距离强平价格 ${pct(leadDist)}）。\n` +
+    (added ? 'Strike 会复制带单员的杠杆设置，但不会自动复制其之后追加到仓位中的保证金。\n' : '') +
+    (toMatch ? `你可以考虑在 Strike 中为该仓位追加约 ${usd(toMatch)} 的保证金，让强平价格更接近带单员的水平；也可以保持现状。`
+      : '你可以考虑在 Strike 中为该仓位追加保证金，让强平价格离当前价格更远；也可以保持现状。'),
   A6sub: (label, leadId, status) =>
-    `${label}：对 ${short(leadId)} 的跟单在 Strike 跟单列表上现在显示为${status === 'liquidated' ? '已强平' : status === 'stopped' ? '已停止' : status}。`,
+    `${label}：Strike 的跟单列表现已将你对带单员 ${short(leadId)} 的跟单仓位标记为${status === 'liquidated' ? '已强平' : status === 'stopped' ? '已停止' : status}。`,
 };

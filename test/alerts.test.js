@@ -25,7 +25,7 @@ test('A1 fires at 5% and again at 2%, not at 6%', () => {
 });
 test('A1 on a stock/commodity says the price keeps moving when the market is closed', () => {
   const a = run(snap(), snap({ copies: [copy('XAU-USD', 'long', { liq: 97 })] })).find(a => a.kind === 'A1');
-  assert.match(a.text, /price keeps moving and can jump when it reopens/);
+  assert.match(a.text, /when its home exchange is closed, Strike.s price keeps moving and can jump when the exchange reopens/);
 });
 test('A2 needs two polls in a row; opposite side counts', () => {
   const leads = { [L]: leadState([{ coin: 'BTC', szi: -1 }]) };

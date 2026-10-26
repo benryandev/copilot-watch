@@ -61,7 +61,7 @@ test('alerts follow the chat language', () => {
   const snap = (o = {}) => ({ accountId: 'acc', label: 'Sub1', at: NOW, since: NOW - 3600_000, copies: [], subs: { [L]: { status: 'active' } }, fills: [], orphans: [], ...o });
   const cur = snap({ copies: [{ subId: 's1', leadId: L, market: 'BTC-USD', side: 'long', mark: 100, liq: 96 }] });
   const zh = detectAlerts(snap(), cur, { liq: 5, lang: 'zh' }, { mk, now: NOW }).find(a => a.kind === 'A1');
-  assert.match(zh.text, /⚠️ Sub1：BTC 多单跟单距离强平 4\.0%（标记价格 100，强平价格 96）/);
+  assert.match(zh.text, /⚠️ Sub1：你的 BTC 多单跟单仓位距离强平 4\.0%（标记价格 100，强平价格 96）/);
   const en = detectAlerts(snap(), cur, { liq: 5 }, { mk, now: NOW }).find(a => a.kind === 'A1');
   assert.match(en.text, /the BTC long copy is 4\.0% from liquidation/);
 });
@@ -69,8 +69,8 @@ test('A2 wording in both languages (lead flipped, lead gone)', () => {
   const c = { market: 'ETH-USD', side: 'long', leadId: '0xlead000000000000000000000000000000000001' };
   assert.match(A.A2('S', c, { flip: 'short' }), /is now short instead/);
   assert.match(A.A2('S', c, { gone: true }), /no longer holds ETH\./);
-  assert.match(AZ.A2('S', c, { flip: 'short' }), /现在改为空单/);
-  assert.match(AZ.A2('S', c, { gone: true }), /已经不再持有 ETH/);
+  assert.match(AZ.A2('S', c, { flip: 'short' }), /现在持有的是空单/);
+  assert.match(AZ.A2('S', c, { gone: true }), /已不再持有 ETH。带单员平仓后，Strike 不一定会同步平掉你的跟单仓位/);
 });
 test('daily paper line in Chinese', () => {
   const t = { id: 'abc', lead: '0x1234567890abcdef1234567890abcdef12345678', from: Date.UTC(2026, 9, 12), settings: { mode: 'fm', amount: 50, lev: 5, marginMode: 'isolated' } };

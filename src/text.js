@@ -65,7 +65,7 @@ export const T = {
   trialBusy: (t, page) => `Paper copy of ${short(t.lead)}: Hyperliquid was busy, so no update today. ${page}${t.id}`,
 };
 
-const OFF_HOURS = "The real market is closed outside its trading hours, but Strike's price keeps moving and can jump when it reopens.";
+const OFF_HOURS = "This is a stock or commodity: when its home exchange is closed, Strike's price keeps moving and can jump when the exchange reopens.";
 
 /** Alert wording. Each takes the facts and returns plain text. */
 export const A = {
@@ -92,7 +92,7 @@ export const A = {
     `${label}: the ${mkt(c.market)} ${c.side} copy would be liquidated before the lead's own position. ` +
     `Copy: ${c.leverage}x, liquidation ${px(c.liq)} (${pct(dist)} away). The lead ${short(c.leadId)}: ${lp.lev}x isolated${added ? ' with margin added' : ''}, liquidation ${px(lp.liqPx)} (${pct(leadDist)} away). ` +
     (added ? 'Strike copies the lead\'s leverage setting, not margin they add to a position later. ' : '') +
-    `Options: ${toMatch ? `add about ${usd(toMatch)} margin to this position in Strike to match the lead's liquidation price, ` : 'add margin to this position in Strike, '}or leave it.`,
+    `Options: ${toMatch ? `add about ${usd(toMatch)} margin to this position in Strike to bring its liquidation price close to the lead's, ` : 'add margin to this position in Strike, '}or leave it.`,
   A6sub: (label, leadId, status) =>
     `${label}: the copy of ${short(leadId)} is now ${status} on Strike's copy list.`,
 };
