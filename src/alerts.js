@@ -7,7 +7,7 @@
 //   orphans: [key] }                                   // orphan keys seen this round (an alert needs two rounds in a row)
 // leads = {leadAddr: null | {ch: {main, xyz}, fills: [{coin, dir, time, oid, liquidation}], withdrawn24h, accountValue}}
 //   null = Hyperliquid didn't answer this round: never read as "the lead holds nothing".
-import { A } from './text.js';
+import { texts } from './i18n.js';
 import { hlMap, isOffHours, coinsOf } from '../core/markets.js';
 import { allPositions } from '../core/hl.js';
 
@@ -50,6 +50,7 @@ export function findOrphans(cur, leads, mk) {
  * @returns {{key: string, kind: string, accountId: string, text: string, ttl: number}[]}
  */
 export function detectAlerts(prev, cur, settings, { leads = {}, mk = {}, now = Date.now() } = {}) {
+  const { A } = texts(settings?.lang);
   const out = []; const label = cur.label; const add = (kind, key, text) => out.push({ kind, key: `${kind}:${key}`, accountId: cur.accountId, text, ttl: COOL[kind] || COOL.default });
   if (!prev) return out; // first poll: baseline only
   const since = prev.since ?? prev.at;
@@ -93,7 +94,7 @@ export function detectAlerts(prev, cur, settings, { leads = {}, mk = {}, now = D
     const last = (lead.fills || []).filter(f => coins.includes(f.coin)).at(-1);
     if (last && isLiqFill(last, c.leadId)) { add('A2', k, A.A2liq(label, c)); continue; }
     const sides = leadSides(lead, coins);
-    add('A2', k, A.A2(label, c, sides.length ? `is now ${sides[0]} instead` : `no longer holds ${c.market.replace(/-USD$/, '')}`));
+    add('A2', k, A.A2(label, c, sides.length ? { flip: sides[0] } : { gone: true }));
   }
 
   // A3: a lead open/add on a Strike market with no copy fill within 10 minutes

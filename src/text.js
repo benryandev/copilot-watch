@@ -16,9 +16,9 @@ export const T = {
   start: 'Copilot Watch sends alerts about Strike copy trades. It reads public data only and never asks for a key.\n\n' +
     'Send /watch with a Strike address (addr1…), a nickname or a sub-account ID. Add a sub-account name after an address to watch only that one, e.g. /watch addr1… Sub1.\n\n' +
     'Alerts: a copy near liquidation, a copy the lead has already closed, a lead trade that wasn\'t copied, a copy that would be liquidated before the lead, a lead using most of their margin, a lead withdrawing most of their funds, and a copy closed by liquidation.\n\n' +
-    'Commands: /status, /settings liq=5, /unwatch <account>, /paper <0x wallet> (try a copy on paper first), /stop.\n\n' +
+    'Commands: /status, /settings liq=5, /unwatch <account>, /paper <0x wallet> (try a copy on paper first), /lang zh (中文), /stop.\n\n' +
     'Stored: this chat\'s id, the accounts you watch and the last fills seen. /stop deletes all of it. ' + DISCLAIMER,
-  help: 'Commands:\n/watch <addr1, nickname or sub-account ID> [sub-account name]\n/status: open copies and how close each is to liquidation\n/settings liq=5: alert when a copy is within this % of liquidation (1 to 20)\n/unwatch <account>: stop watching one account\n/paper <0x wallet> [size]: paper copy a Hyperliquid wallet (no money)\n/stop: stop everything and delete this chat\'s data\n\nSub-account IDs: Strike app, Sub-accounts page, Account ID column, copy button.',
+  help: 'Commands:\n/watch <addr1, nickname or sub-account ID> [sub-account name]\n/status: open copies and how close each is to liquidation\n/settings liq=5: alert when a copy is within this % of liquidation (1 to 20)\n/unwatch <account>: stop watching one account\n/paper <0x wallet> [size]: paper copy a Hyperliquid wallet (no money)\n/lang en|zh: language (English or 中文)\n/stop: stop everything and delete this chat\'s data\n\nSub-account IDs: Strike app, Sub-accounts page, Account ID column, copy button.',
   dmOnly: 'Copilot Watch works in direct messages only. Open a chat with the bot and send /start.',
   rate: 'Too many commands, try again in a minute.',
   full: 'Copilot Watch is at its limit of watched chats for now (it is a hackathon prototype). Try again later.',
@@ -54,6 +54,15 @@ export const T = {
   statusNone: 'no open copies.',
   statusLine: p => `${mkt(p.market)} ${p.side} ${p.leverage}x: P&L ${usd(p.pnl, true)}, ${p.dist == null ? 'no liquidation price' : `${pct(p.dist)} from liquidation`}${p.leadId ? `, lead ${short(p.leadId)}` : ''}`,
   statusTail: liq => `Liquidation alerts at ${liq}% and 2%. Data from Strike's public API; the copy list can lag up to 10 minutes.`,
+  langSet: 'Language set to English. /lang zh switches to Chinese (中文).',
+  langBad: 'Use /lang en (English) or /lang zh (中文).',
+  dailyHead: 'Daily paper copy update:',
+  trialLine: (t, r, since, page) => {
+    const s = t.settings, mode = s.mode === 'fm' ? `fixed margin ${usd(s.amount)}` : `fixed ratio ${usd(s.amount)}`;
+    return `Paper copy of ${short(t.lead)} (${mode}, ${s.lev}x ${s.marginMode}): ${usd(r.net, true)} since ${since}, biggest drop ${usd(r.dd)}, ` +
+      `${r.liquidations} liquidation${r.liquidations === 1 ? '' : 's'}, ${r.taken} entries copied. ${page}${t.id}`;
+  },
+  trialBusy: (t, page) => `Paper copy of ${short(t.lead)}: Hyperliquid was busy, so no update today. ${page}${t.id}`,
 };
 
 const OFF_HOURS = "The real market is closed outside its trading hours, but Strike's price keeps moving and can jump when it reopens.";
@@ -64,7 +73,7 @@ export const A = {
     `⚠️ ${label}: the ${mkt(c.market)} ${c.side} copy is ${pct(dist)} from liquidation (mark ${px(c.mark)}, liquidation ${px(c.liq)}). ` +
     `Options: add margin to this position in Strike, reduce it, or leave it.${offHours ? ' ' + OFF_HOURS : ''}`,
   A2: (label, c, why) =>
-    `${label}: the ${mkt(c.market)} ${c.side} copy is still open, but the lead ${short(c.leadId)} ${why}. ` +
+    `${label}: the ${mkt(c.market)} ${c.side} copy is still open, but the lead ${short(c.leadId)} ${why.flip ? `is now ${why.flip} instead` : `no longer holds ${mkt(c.market)}`}. ` +
     'Strike doesn\'t always close a copy the lead has left. Options: close it in Strike, or keep it as your own position.',
   A2liq: (label, c) =>
     `${label}: the lead ${short(c.leadId)} was liquidated on ${mkt(c.market)}. Check whether this copy closed; it still shows open.`,

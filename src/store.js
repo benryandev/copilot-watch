@@ -1,11 +1,12 @@
 // KV schema for Copilot Watch. Values are JSON. Nothing here holds message text.
-//   chat:<tg|dc>:<id>  {platform, chatId, guildId?, ownerUserId, accounts: [{accountId, label}], settings: {liq}, createdAt}
+//   chat:<tg|dc>:<id>  {platform, chatId, guildId?, ownerUserId, accounts: [{accountId, label}], settings: {liq, lang?}, createdAt}
 //   acct:<accountId>   {chats: [chatKey], base: snapshot baseline, at}
 //   lead:<0x>          {at, ...last snapshot}
 //   cool:<chatKey>:<alertKey>   1, expires (A1 6 h, others 24 h)
 //   rate:<chatKey>:<minute>     count, expires after 2 minutes
 //   cache:leaderboard  {at, rows}
 //   stat:<name>:<YYYY-MM-DD>   daily count (no ids), expires after 400 days; see scripts/stats.mjs
+//   lang:<chatKey>              'en' | 'zh', a /lang choice made before the chat has a record; expires after 30 days, /stop deletes it
 
 export const chatKey = (platform, chatId) => `chat:${platform}:${chatId}`;
 
@@ -46,6 +47,9 @@ export function createStore(kv, { now = () => Date.now() } = {}) {
     async countAccts() { return (await listAll('acct:')).length; },
     async countChats() { return (await listAll('chat:')).length; },
     async listChats() { const keys = await listAll('chat:'); return (await Promise.all(keys.map(getJ))).filter(Boolean); },
+    getLang: key => kv.get(`lang:${key}`),
+    putLang: (key, lang) => kv.put(`lang:${key}`, lang, { expirationTtl: 30 * 86400 }),
+    deleteLang: key => kv.delete(`lang:${key}`),
     getAcct: id => getJ(`acct:${id}`),
     putAcct: (id, v) => putJ(`acct:${id}`, v),
     async linkAcct(id, key) {

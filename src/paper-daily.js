@@ -6,7 +6,7 @@ import { getTrial, PAGE } from './paper.js';
 import { makeDeps } from './deps.js';
 import { sendTelegram } from './telegram.js';
 import { postDiscord } from './discord.js';
-import { short, usd } from './text.js';
+import { texts } from './i18n.js';
 
 /** Replays one trial. Returns the replay result plus {days}. */
 export async function runTrial(t, mk, { now = Date.now(), fetch, maxPages = 3, maxCoins = 8, fundingCache = null } = {}) {
@@ -19,11 +19,9 @@ export async function runTrial(t, mk, { now = Date.now(), fetch, maxPages = 3, m
   return { ...r, days, truncated: lead.truncated };
 }
 
-export const trialLine = (t, r) => {
-  const s = t.settings, mode = s.mode === 'fm' ? `fixed margin ${usd(s.amount)}` : `fixed ratio ${usd(s.amount)}`;
-  const since = new Date(t.from).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', timeZone: 'Australia/Brisbane' });
-  return `Paper copy of ${short(t.lead)} (${mode}, ${s.lev}x ${s.marginMode}): ${usd(r.net, true)} since ${since}, biggest drop ${usd(r.dd)}, ` +
-    `${r.liquidations} liquidation${r.liquidations === 1 ? '' : 's'}, ${r.taken} entries copied. ${PAGE}${t.id}`;
+export const trialLine = (t, r, lang = 'en') => {
+  const since = new Date(t.from).toLocaleDateString(lang === 'zh' ? 'zh-CN' : 'en-AU', { day: 'numeric', month: lang === 'zh' ? 'long' : 'short', timeZone: 'Australia/Brisbane' });
+  return texts(lang).T.trialLine(t, r, since, PAGE);
 };
 
 export async function dailyPaper(env, deps = null) {
@@ -35,14 +33,15 @@ export async function dailyPaper(env, deps = null) {
   const meta = await d.hl.meta(); const mk = buildMarkets(await d.strike.markets(), meta.core, meta.xyz, meta.other || {});
   let budget = 60; const fundingCache = new Map();  // funding is per market, so trials in one run share it
   for (const c of chats) {
+    const lang = c.platform === 'dc' ? 'en' : c.settings?.lang || 'en', { T } = texts(lang);
     const lines = [];
     for (const id of c.trials) {
       if (budget-- <= 0) break;
       const t = await getTrial(kv, id); if (!t) continue;
-      try { lines.push(trialLine(t, await (d.runTrial || runTrial)(t, mk, { now, fundingCache }))); res.trials++; }
-      catch { res.failed++; lines.push(`Paper copy of ${short(t.lead)}: Hyperliquid was busy, so no update today. ${PAGE}${t.id}`); }
+      try { lines.push(trialLine(t, await (d.runTrial || runTrial)(t, mk, { now, fundingCache }), lang)); res.trials++; }
+      catch { res.failed++; lines.push(T.trialBusy(t, PAGE)); }
     }
-    if (lines.length) { await d.send(c, ['Daily paper copy update:', ...lines].join('\n\n')); res.chats++; }
+    if (lines.length) { await d.send(c, [T.dailyHead, ...lines].join('\n\n')); res.chats++; }
   }
   console.log(res);
   return res;

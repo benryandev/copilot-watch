@@ -1,6 +1,6 @@
 // Telegram transport: webhook with a secret header, private chats only, plain-text replies.
 import { handleCommand } from './commands.js';
-import { T } from './text.js';
+import { texts, autoLang } from './i18n.js';
 import { makeDeps } from './deps.js';
 
 const enc = new TextEncoder();
@@ -17,11 +17,12 @@ export function telegramUpdateToCommand(update) {
   const m = update?.message;
   if (!m || typeof m.text !== 'string' || !m.chat) return null;
   const text = m.text.trim().slice(0, 600);
-  if (!text.startsWith('/')) return m.chat.type === 'private' ? { chatId: String(m.chat.id), plain: true } : null;
+  const lang = autoLang(m.from?.language_code);
+  if (!text.startsWith('/')) return m.chat.type === 'private' ? { chatId: String(m.chat.id), plain: true, lang } : null;
   if (m.chat.type !== 'private') return { decline: String(m.chat.id) };
   const [head, ...rest] = text.split(/\s+/);
   const name = head.slice(1).split('@')[0].toLowerCase();
-  return { platform: 'tg', chatId: String(m.chat.id), userId: String(m.from?.id ?? m.chat.id), isAdmin: true, name, args: rest };
+  return { platform: 'tg', chatId: String(m.chat.id), userId: String(m.from?.id ?? m.chat.id), isAdmin: true, name, args: rest, lang };
 }
 
 /** Split on line breaks into chunks of at most `max` characters. */
@@ -58,7 +59,7 @@ export async function handleTelegram(req, env, ctx, deps = null) {
   const work = (async () => {
     if (cmd.decline) return; // groups: stay silent (one decline per message would be an amplifier)
     const d = deps || makeDeps(env);
-    if (cmd.plain) { if (await (d.rateOk ? d.rateOk(`chat:tg:${cmd.chatId}`) : d.store.rateOk(`chat:tg:${cmd.chatId}`))) await send(cmd.chatId, T.help); return; }
+    if (cmd.plain) { if (await (d.rateOk ? d.rateOk(`chat:tg:${cmd.chatId}`) : d.store.rateOk(`chat:tg:${cmd.chatId}`))) await send(cmd.chatId, texts(cmd.lang).T.help); return; }
     const reply = await handleCommand(cmd, d);
     await send(cmd.chatId, reply.text);
   })().catch(e => console.log({ telegramError: e?.name || 'error' }));
