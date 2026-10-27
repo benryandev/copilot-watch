@@ -14,7 +14,7 @@ await call('setMyCommands', { commands: [
   { command: 'settings', description: 'Liquidation alert threshold, e.g. liq=5' },
   { command: 'unwatch', description: 'Stop watching one account' },
   { command: 'paper', description: 'Paper copy a Hyperliquid wallet (no money)' },
-  { command: 'lang', description: 'Language: /lang en or /lang zh (中文)' },
+  { command: 'lang', description: 'Language: /lang en, /lang zh (简体) or /lang tw (繁體)' },
   { command: 'stop', description: 'Stop everything and delete this chat\'s data' },
   { command: 'help', description: 'How it works' } ] });
 // Chinese menu and descriptions for Telegram users whose app is set to Chinese (language_code zh*).
@@ -24,7 +24,7 @@ await call('setMyCommands', { language_code: 'zh', commands: [
   { command: 'settings', description: '强平提醒的阈值，例如 liq=5' },
   { command: 'unwatch', description: '停止关注某个账户' },
   { command: 'paper', description: '模拟跟单一个 Hyperliquid 钱包（不用真钱）' },
-  { command: 'lang', description: '切换语言：/lang en 或 /lang zh' },
+  { command: 'lang', description: '切换语言：/lang en、/lang zh（简体）或 /lang tw（繁體）' },
   { command: 'stop', description: '停止全部提醒，并删除本聊天的数据' },
   { command: 'help', description: '使用说明' } ] });
 await call('setMyDescription', { language_code: 'zh', description: '为 Strike 跟单用户发送提醒：跟单仓位接近强平、带单员已平仓但跟单仍持有、漏跟的交易、带单员的保证金压力和资金转出。只读取公开数据，绝不索要密钥。不构成投资建议。与 Strike Finance 无关联。' });

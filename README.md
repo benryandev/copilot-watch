@@ -20,7 +20,7 @@ Built during the Strike Finance hackathon (22–24 Oct 2026). Not affiliated wit
 | `/settings liq=5` | Liquidation alert threshold, 1–20% (a second alert always fires at 2%) |
 | `/unwatch <account>` | Stop watching one account |
 | `/paper <0x wallet> [size]` | Paper copy a Hyperliquid wallet before copying it for real (no money); `/paper` alone lists this chat's paper copies. A summary arrives daily at 08:00 Brisbane time; the trial page is on [Copilot Check](https://strike.benryan.com.au). |
-| `/lang en` or `/lang zh` | Language for this chat: English or simplified Chinese (简体中文). Telegram picks Chinese automatically when your app is set to Chinese; Discord stays English. |
+| `/lang en`, `/lang zh` or `/lang tw` | Language for this chat: English, simplified Chinese (简体中文) or traditional Chinese (繁體中文). Telegram picks Chinese automatically when your app is set to Chinese (traditional for Taiwan, Hong Kong and Macau settings); Discord stays English. |
 | `/stop` | Stop everything here and delete this chat's data |
 
 ![Copilot Watch alerts in Telegram: a copy 1.9% from liquidation, a copy that would be liquidated before the lead, and a lead trade that wasn't copied](docs/img/alerts.png)
