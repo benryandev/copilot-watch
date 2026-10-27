@@ -1,5 +1,7 @@
 # Copilot Watch
 
+[简体中文](README.zh-CN.md)
+
 Telegram and Discord alerts for Strike copy traders: hear when a copy is close to liquidation, when the wallet you copy has left a position your copy still holds, or when one of its trades wasn't copied.
 
 Built during the Strike Finance hackathon (22–24 Oct 2026). Not affiliated with Strike Finance. Not financial advice.
