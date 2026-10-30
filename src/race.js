@@ -1,6 +1,8 @@
 // Race time-trial leaderboard for the Copilot Check ecosystem game: best lap per name, top 100 per track in one KV key.
 //   race:top:<track>   [{id, name, key, ms, splits, at}] sorted by ms, then earlier at; at most 100, one per name (key = lower case)
 //   race:ip:<hash>     attempt time; expires after 60 s (one post per IP per minute). The IP is hashed, never stored.
+//   race:stats:<track>:<YYYY-MM-DD>  {open, found, start, finish, post}: visitors per UTC day who reached each stage
+//   race:seen:<hash>   one per IP, track, day and stage, so a visitor counts once per stage per day; expires after 2 days
 // Times are checked against the track (src/race-tracks.js): every checkpoint segment must take at least its length / RACE_MAX_SPEED.
 
 import { RACE_TRACKS, RACE_MAX_SPEED, RACE_MAX_MS } from './race-tracks.js';
@@ -10,6 +12,9 @@ import { newId } from './paper.js';
 export const RACE_ORIGINS = ['https://strike.benryan.com.au', 'http://localhost:8766'];
 export const RACE_KEEP = 100, RACE_SHOW = 10, RACE_RATE_SEC = 60, RACE_MAX_BODY = 4096, RACE_NAME_MAX = 20;
 export const RACE_ADMIN_HEADER = 'x-race-admin';
+// Funnel stages, in order. "post" is counted here when a time is accepted; the page sends the rest.
+export const RACE_EVENTS = ['open', 'found', 'start', 'finish', 'post'];
+export const RACE_STATS_DAYS = 90;
 
 // ---- names ----
 
@@ -117,9 +122,39 @@ const cors = origin => (RACE_ORIGINS.includes(origin)
   : { vary: 'Origin' });
 const json = (v, status, origin, extra = {}) => new Response(JSON.stringify(v), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store', ...cors(origin), ...extra } });
 
-async function ipKey(ip) {
-  const h = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`race:${ip}`)));
-  return 'race:ip:' + [...h.slice(0, 12)].map(b => b.toString(16).padStart(2, '0')).join('');
+async function hashHex(s) {
+  const h = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)));
+  return [...h.slice(0, 12)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+const ipKey = async ip => 'race:ip:' + await hashHex(`race:${ip}`);
+
+// ---- funnel counts ----
+
+const utcDay = now => new Date(now).toISOString().slice(0, 10);
+const statsKey = (track, day) => `race:stats:${track}:${day}`;
+
+/** Count one visitor reaching a stage today, once per IP. Counts are approximate under bursts (KV read, then write). */
+export async function countEvent(kv, track, kind, ip, now = Date.now()) {
+  const day = utcDay(now);
+  const seen = 'race:seen:' + await hashHex(`seen:${track}:${day}:${kind}:${ip}`);
+  if (await kv.get(seen)) return false;
+  await kv.put(seen, '1', { expirationTtl: 2 * 86400 });
+  const k = statsKey(track, day);
+  const c = (await kv.get(k, 'json')) || {};
+  c[kind] = (c[kind] || 0) + 1;
+  await kv.put(k, JSON.stringify(c), { expirationTtl: (RACE_STATS_DAYS + 1) * 86400 });
+  return true;
+}
+
+/** The last `days` UTC days of counts, newest first, every stage filled in. */
+export async function getStats(kv, track, days, now = Date.now()) {
+  const out = [];
+  for (let i = 0; i < days; i++) {
+    const day = utcDay(now - i * 86400000);
+    const c = (await kv.get(statsKey(track, day), 'json')) || {};
+    out.push({ day, ...Object.fromEntries(RACE_EVENTS.map(e => [e, c[e] || 0])) });
+  }
+  return out;
 }
 
 async function readJson(req) {
@@ -152,7 +187,8 @@ export async function handleRaceApi(req, env, { now = Date.now() } = {}) {
     const r = await readJson(req);
     if (r.error) return json({ error: r.error }, r.status, origin);
     // Every post that parses counts toward the per-IP limit, valid or not, so guessing the checks is slow.
-    const k = await ipKey(req.headers.get('cf-connecting-ip') || '?');
+    const ip = req.headers.get('cf-connecting-ip') || '?';
+    const k = await ipKey(ip);
     const prev = Number(await kv.get(k));
     if (prev) {
       const wait = Math.max(1, Math.ceil((prev + RACE_RATE_SEC * 1000 - now) / 1000));
@@ -162,7 +198,29 @@ export async function handleRaceApi(req, env, { now = Date.now() } = {}) {
     const p = parseTime(r.body);
     if (!p.ok) return json({ error: p.error, ...(p.segment != null ? { segment: p.segment } : {}) }, 400, origin);
     const { rank, best, rows } = await addTime(kv, p.entry, now);
+    await countEvent(kv, p.entry.track, 'post', ip, now);
     return json({ ok: true, rank, best, top: pub(rows) }, 200, origin);
+  }
+
+  // Funnel event from the page (sent with sendBeacon, so text/plain and no preflight). No reply body.
+  if (req.method === 'POST' && url.pathname === '/race/event') {
+    if (!RACE_ORIGINS.includes(origin)) return json({ error: 'origin' }, 403, origin);
+    const r = await readJson(req);
+    if (r.error) return json({ error: r.error }, r.status, origin);
+    const { track, kind } = r.body && typeof r.body === 'object' ? r.body : {};
+    if (typeof track !== 'string' || !Object.hasOwn(RACE_TRACKS, track)) return json({ error: 'unknown_track' }, 400, origin);
+    if (typeof kind !== 'string' || kind === 'post' || !RACE_EVENTS.includes(kind)) return json({ error: 'bad_kind' }, 400, origin);
+    await countEvent(kv, track, kind, req.headers.get('cf-connecting-ip') || '?', now);
+    return new Response(null, { status: 204, headers: cors(origin) });
+  }
+
+  // Funnel counts, admin only: ?track=&days= (1 to 90, default 14)
+  if (req.method === 'GET' && url.pathname === '/race/stats') {
+    if (!isAdmin(req, env)) return json({ error: 'forbidden' }, 403, origin);
+    const track = url.searchParams.get('track') || '';
+    if (!Object.hasOwn(RACE_TRACKS, track)) return json({ error: 'unknown_track' }, 404, origin);
+    const days = Math.min(RACE_STATS_DAYS, Math.max(1, Number.parseInt(url.searchParams.get('days'), 10) || 14));
+    return json({ track, days: await getStats(kv, track, days, now) }, 200, origin);
   }
 
   if (req.method === 'DELETE' && url.pathname === '/race/time') {

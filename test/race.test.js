@@ -196,3 +196,25 @@ test('admin delete: token required and checked, unset env denies, deletes by id 
   assert.equal((await del({ track: 'nope', name: 'Charlie' }, H)).status, 400);
   assert.equal((await del({ track: TRACK }, H)).status, 400);
 });
+
+test('funnel: page events count once per IP per stage per day; posts count on acceptance; stats are admin only', async () => {
+  const e = env({ RACE_ADMIN_TOKEN: ADMIN });
+  const ev = (kind, ip = '9.9.9.9', o = {}) => handleRaceApi(req('POST', '/race/event', { ip, body: { track: TRACK, kind }, headers: { 'content-type': 'text/plain' }, ...o }), e, { now: o.now ?? NOW });
+  assert.equal((await ev('open')).status, 204);
+  assert.equal((await ev('open')).status, 204); // same visitor, same day: not counted again
+  await ev('open', '9.9.9.8'); await ev('found'); await ev('start'); await ev('finish');
+  assert.equal(await err(await ev('post')), 'bad_kind'); // only the worker counts posts
+  assert.equal(await err(await ev('nope')), 'bad_kind');
+  assert.equal((await ev('open', '9.9.9.7', { origin: 'https://evil.example' })).status, 403);
+  assert.equal(await err(await handleRaceApi(req('POST', '/race/event', { body: { track: 'x', kind: 'open' } }), e, { now: NOW })), 'unknown_track');
+  await post(e, good());
+  await ev('open', '9.9.9.9', { now: NOW + 86400000 }); // next day counts again
+  const stats = o => handleRaceApi(req('GET', `/race/stats?track=${TRACK}&days=2`, o), e, { now: NOW + 86400000 });
+  assert.equal((await stats()).status, 403);
+  assert.equal((await stats({ headers: { [RACE_ADMIN_HEADER]: 'wrong' } })).status, 403);
+  const { days } = await (await stats({ headers: { [RACE_ADMIN_HEADER]: ADMIN } })).json();
+  assert.deepEqual(days, [
+    { day: '2026-10-31', open: 1, found: 0, start: 0, finish: 0, post: 0 },
+    { day: '2026-10-30', open: 2, found: 1, start: 1, finish: 1, post: 1 },
+  ]);
+});
