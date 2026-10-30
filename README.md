@@ -66,15 +66,39 @@ A Cloudflare Worker (`src/worker.js`) with these entry points:
 
 - `POST /telegram`: Telegram webhook, checked against a secret header (constant-time compare). Direct messages only.
 - `/api/paper`: create and read Paper Copy trials for Copilot Check (CORS limited to strike.benryan.com.au; rate-limited; trials expire after 30 days).
+- `/race/…`: the time-trial leaderboard for the Copilot Check ecosystem game (see [Race leaderboard](#race-leaderboard)).
 - `POST /discord`: Discord HTTP interactions, Ed25519 signature and timestamp checked; replies are deferred and then edited, alerts are posted to the channel. Mentions are always disabled and Strike-supplied names are markdown-escaped.
 - A cron every 2 minutes (`src/poll.js`) reads each watched account once and each lead once, however many chats watch them, diffs against the stored baseline, and sends alerts. A lead that Hyperliquid doesn't answer for is skipped for that round, never read as "holds nothing".
 - A daily cron at 22:00 UTC (08:00 Brisbane, `src/paper-daily.js`) sends each chat a one-line summary of its paper copies.
 
 State lives in Workers KV. `core/` (HTTP with backoff, Strike and Hyperliquid clients, market map) is shared with [Copilot Check](https://github.com/benryandev/copilot-check) and copied in by `pnpm sync-core`; a test checks the copy against its hash.
 
+## Race leaderboard
+
+Best lap per name for the RealFi racetrack in the ecosystem game (`src/race.js`; track numbers in `src/race-tracks.js`). CORS is limited to `https://strike.benryan.com.au` and `http://localhost:8766`.
+
+| Endpoint | What it does |
+|---|---|
+| `GET /race/top?track=realfi-v1` | `{track, top: [{name, ms, at}]}`, the 10 fastest. No ids or IPs. |
+| `POST /race/time` | Body `{track, name, ms, splits}`, `splits` being the cumulative time in ms at each checkpoint. Replies `{ok: true, rank, best, top}`: `rank` is where the name's best now sits (1-based, `null` outside the top 100), `best` is true when this time became the name's new best on the board. Errors are `{error}` with 400 (`unknown_track`, `bad_name`, `rude_name`, `bad_splits`, `bad_ms`, `lap_too_fast`, `segment_too_fast` + `segment`), 403 (`origin`), 413 (`too_large`) or 429 (`rate`, with `Retry-After`). |
+| `DELETE /race/time` | Admin only (`x-race-admin` header). Removes by `id` or `name` (case-insensitive) from `track`, given in a JSON body or the query string. `{ok, removed}`. |
+
+Checks: the track must be known; the name is 1–20 characters once invisible and bidi characters are stripped and spaces trimmed, has no control characters and passes a short rude-word list (case, accents, l33t and separators like `f.u.c.k` undone first; words like "cunt" only match whole, so Scunthorpe passes). There is one split per checkpoint, strictly increasing, and every segment, the last one to the line included, must take at least its length ÷ 30 m/s (the car tops out at 24 m/s). A lap must be at least the track length ÷ 30 m/s and under 30 minutes.
+
+Limits: one post per IP a minute. Every post that parses as JSON counts, valid or not, so probing the checks is slow; the IP is kept only as a hash in a key that expires after 60 s. One KV key per track (`race:top:<track>`) holds the top 100, one entry per name (compared case-insensitively), sorted by time and then by who set it first. Bodies over 4 KB are refused. Two posts landing in the same instant can race on that key (last write wins); fine at this scale.
+
+The admin token is a Worker secret, which Ben sets himself: `pnpm dlx wrangler@4 secret put RACE_ADMIN_TOKEN`. Without it, deletes are refused. With the header, `GET /race/top` also returns `all` (every entry, with ids) instead of `top`.
+
+```sh
+curl -X DELETE 'https://copilot-watch.benryan.workers.dev/race/time?track=realfi-v1&name=SomeName' \
+  -H 'x-race-admin: YOUR_RACE_ADMIN_TOKEN'
+```
+
+No `wrangler.toml` change is needed: it uses the existing `KV` binding.
+
 ## Privacy
 
-Stored per chat: the Telegram chat id or Discord channel and server ids, the user id that set the watch (Discord permissions), the accounts watched, the alert threshold and language, and per account the last 200 fill ids and open copies seen (public data). Alert text is stored only when Telegram or Discord can't take it, for up to an hour so it can be resent; logs carry counts only. `/stop` deletes the chat's data; accounts no longer watched by anyone are deleted with it. Usage is kept as daily totals with no ids attached (new chats, `/stop`s, paper copies made, arrivals from the Copilot Check link), for 400 days.
+Stored per chat: the Telegram chat id or Discord channel and server ids, the user id that set the watch (Discord permissions), the accounts watched, the alert threshold and language, and per account the last 200 fill ids and open copies seen (public data). Alert text is stored only when Telegram or Discord can't take it, for up to an hour so it can be resent; logs carry counts only. `/stop` deletes the chat's data; accounts no longer watched by anyone are deleted with it. Usage is kept as daily totals with no ids attached (new chats, `/stop`s, paper copies made, arrivals from the Copilot Check link), for 400 days. Race leaderboard: the name, lap time, checkpoint splits and when it was set, for the top 100 per track; no IPs or account ids.
 
 ## Limits
 

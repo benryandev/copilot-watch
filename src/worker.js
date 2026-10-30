@@ -4,6 +4,7 @@ import { handleDiscord } from './discord.js';
 import { poll } from './poll.js';
 import { handlePaperApi } from './paper.js';
 import { dailyPaper } from './paper-daily.js';
+import { handleRaceApi } from './race.js';
 
 export default {
   async fetch(req, env, ctx) {
@@ -11,6 +12,7 @@ export default {
     if (req.method === 'POST' && pathname === '/telegram') return handleTelegram(req, env, ctx);
     if (req.method === 'POST' && pathname === '/discord') return handleDiscord(req, env, ctx);
     if (pathname.startsWith('/api/paper')) return handlePaperApi(req, env);
+    if (pathname.startsWith('/race/')) return handleRaceApi(req, env);
     if (pathname === '/health') return new Response('ok');
     if (pathname === '/') return new Response('Copilot Watch: Telegram and Discord alerts for Strike copy traders. https://t.me/CopilotWatchBot', { headers: { 'content-type': 'text/plain; charset=utf-8' } });
     return new Response('Not found', { status: 404 });
