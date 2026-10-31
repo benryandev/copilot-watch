@@ -3,14 +3,14 @@ import { pickName, isReserved, RESERVED, parsePose, WORLD_RADIUS, WORLD_MAX_SPEE
 
 test('pickName: clean names pass, reserved and rude fall back, owner may be Ben', () => {
   assert.deepEqual(pickName('Aveli'), { name: 'Aveli', fallback: false });
-  assert.deepEqual(pickName('Shan', { next: () => '07' }), { name: 'Driver 07', fallback: true });
-  assert.deepEqual(pickName('Sh@n'), { name: 'Driver 01', fallback: true });
-  assert.deepEqual(pickName('STRIKE team'), { name: 'Driver 01', fallback: true });
+  assert.deepEqual(pickName('Shan', { next: () => '07' }), { name: 'Driver 07', fallback: true, reason: 'reserved' });
+  assert.deepEqual(pickName('Sh@n'), { name: 'Driver 01', fallback: true, reason: 'reserved' });
+  assert.deepEqual(pickName('STRIKE team'), { name: 'Driver 01', fallback: true, reason: 'reserved' });
   assert.deepEqual(pickName('Ben', { owner: true }), { name: 'Ben', fallback: false });
-  assert.deepEqual(pickName('Ben'), { name: 'Driver 01', fallback: true });
-  assert.deepEqual(pickName('fuck'), { name: 'Driver 01', fallback: true });
-  assert.deepEqual(pickName(undefined), { name: 'Driver 01', fallback: true });
-  assert.deepEqual(pickName('x'.repeat(21)), { name: 'Driver 01', fallback: true });
+  assert.deepEqual(pickName('Ben'), { name: 'Driver 01', fallback: true, reason: 'reserved' });
+  assert.deepEqual(pickName('fuck'), { name: 'Driver 01', fallback: true, reason: 'rude' });
+  assert.deepEqual(pickName(undefined), { name: 'Driver 01', fallback: true, reason: 'bad' });
+  assert.deepEqual(pickName('x'.repeat(21)), { name: 'Driver 01', fallback: true, reason: 'bad' });
   assert.ok(RESERVED.includes('shan'));
   assert.equal(isReserved('Bén Ryan'), true);
   assert.equal(isReserved('Benny'), false);
@@ -250,4 +250,17 @@ test('room: restore keeps when each socket was last heard (from the attachment),
   r2.restore([r.attachment('a'), { id: 'z', name: 'Zombie', colour: '#fff', ipKey: 'kz', since: 0 }], 100_000);
   assert.deepEqual(r2.reap(99_000).closed, ['z']); // never heard since it joined at 0
   assert.deepEqual(r2.reap(100_001).closed, ['a']); // a was last heard at 40 s: over a minute ago now
+});
+
+test('room: a rejected rename keeps the Driver number you already wear and says why; a kept name says taken', () => {
+  const r = room(); hi(r, 'a'); hi(r, 'b', 'Aveli'); // a is Driver 01
+  const first = to(r.onMessage('a', JSON.stringify({ t: 'name', name: 'Ben' }), 1000).out, 'a')[0];
+  assert.deepEqual(first, { t: 'named', name: 'Driver 01', reason: 'reserved', asked: 'Ben' });
+  const second = to(r.onMessage('a', JSON.stringify({ t: 'name', name: 'fuck' }), 12000).out, 'a')[0];
+  assert.deepEqual(second, { t: 'named', name: 'Driver 01', reason: 'rude', asked: 'fuck' });
+  const third = to(r.onMessage('a', JSON.stringify({ t: 'name', name: 'Aveli' }), 23000).out, 'a')[0];
+  assert.deepEqual(third, { t: 'named', name: 'Aveli (2)', reason: 'taken', asked: 'Aveli' });
+  const fourth = to(r.onMessage('a', JSON.stringify({ t: 'name', name: 'Nova' }), 34000).out, 'a')[0];
+  assert.deepEqual(fourth, { t: 'named', name: 'Nova' });
+  assert.equal(pickName('Ben').reason, 'reserved'); assert.equal(pickName('').reason, 'bad'); assert.equal(pickName('Nova').reason, undefined);
 });

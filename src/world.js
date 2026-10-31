@@ -39,17 +39,20 @@ export function isReserved(name) { return RESERVED_FOLDED.has(fold(name)); }
  * becomes "Driver NN". A name already worn in the room gets " (2)", " (3)". `taken` holds lower-cased names in use;
  * `next()` returns the next two-digit string for the fallback.
  */
-export function pickName(raw, { owner = false, taken = new Set(), next = () => '01' } = {}) {
+export function pickName(raw, { owner = false, taken = new Set(), next = () => '01', keep = null } = {}) {
   const c = cleanName(raw);
-  let name, fallback = false;
+  let name, fallback = false, reason;
   if (c.ok && (owner || !isReserved(c.name))) name = c.name;
   else {
     fallback = true;
-    name = `Driver ${next()}`;
+    reason = !c.ok ? (c.error === 'rude_name' ? 'rude' : 'bad') : 'reserved';
+    // Already wearing a Driver number? Keep it, rather than handing out a new one for every refused try
+    name = keep && /^Driver \d\d$/.test(keep) ? keep : `Driver ${next()}`;
     for (let i = 0; i < 99 && taken.has(name.toLowerCase()); i++) name = `Driver ${next()}`;
   }
+  if (taken.has(name.toLowerCase())) reason ??= 'taken';
   for (let n = 2; taken.has(name.toLowerCase()); n++) name = `${name.replace(/ \(\d+\)$/, '')} (${n})`;
-  return { name, fallback };
+  return reason ? { name, fallback, reason } : { name, fallback };
 }
 
 // ---- poses ----
@@ -179,8 +182,11 @@ export class Room {
       p.renamedAt = now;
       const taken = this.taken(); taken.delete(p.name.toLowerCase());
       const owner = !!this.ownerToken && typeof m.owner === 'string' && m.owner === this.ownerToken;
-      p.name = pickName(m.name, { owner, taken, next: () => this.nextDriver() }).name;
-      return { out: [msg(id, { t: 'named', name: p.name }), ...this.broadcast({ t: 'rename', id, name: p.name }, id)] };
+      const pick = pickName(m.name, { owner, taken, next: () => this.nextDriver(), keep: p.name });
+      p.name = pick.name;
+      const asked = typeof m.name === 'string' ? m.name.slice(0, 40) : '';
+      const named = pick.reason ? { t: 'named', name: p.name, reason: pick.reason, asked } : { t: 'named', name: p.name };
+      return { out: [msg(id, named), ...this.broadcast({ t: 'rename', id, name: p.name }, id)] };
     }
     return bad();
   }
