@@ -79,6 +79,7 @@ export const WORLD_PING_MAX_HZ = 2;
 export const WORLD_FLOOD_MAX = 100; // frames dropped for rate inside 10 s before the socket is closed as a flood
 export const WORLD_FLOOD_WINDOW_MS = 10_000;
 export const WORLD_FLOOD_BLOCK_MS = 60_000; // a flooder's address is refused for this long
+export const WORLD_IDLE_MS = 60_000; // nothing heard for this long (the client beats once a second): the socket is dead, drop it
 // District colours from the map (content.js), minus the player's own hub green, so your car is always the green one.
 export const COLOURS = ['#22d3ee', '#facc15', '#ec4899', '#3b82f6', '#f97316', '#a78bfa', '#0fb89c', '#94a3b8'];
 
@@ -107,7 +108,7 @@ export class Room {
     if (this.blocked('s:' + id, now) || this.blocked('i:' + ipKey, now)) return { ok: false, error: 'blocked' };
     if ([...this.players.values()].filter(p => p.ipKey === ipKey).length >= WORLD_IP_MAX) return { ok: false, error: 'ip' };
     if (this.players.size >= WORLD_MAX) return { ok: false, error: 'full' };
-    this.players.set(id, { id, ipKey, since: now, joined: false, name: null, colour: null, pose: null, times: [], pings: [], dropped: [], lastJump: -Infinity, bad: 0, renamedAt: -Infinity });
+    this.players.set(id, { id, ipKey, since: now, joined: false, name: null, colour: null, pose: null, times: [], pings: [], dropped: [], lastJump: -Infinity, bad: 0, renamedAt: -Infinity, lastMsg: now });
     return { ok: true };
   }
 
@@ -118,10 +119,10 @@ export class Room {
   }
 
   /** Rebuild joined players from stored attachments after a wake-up. */
-  restore(entries) {
+  restore(entries, now = Date.now()) {
     for (const e of entries) {
       if (!e?.id) continue;
-      this.players.set(e.id, { id: e.id, ipKey: e.ipKey, since: e.since, joined: true, name: e.name, colour: e.colour, pose: null, times: [], pings: [], dropped: [], lastJump: -Infinity, bad: 0, renamedAt: -Infinity });
+      this.players.set(e.id, { id: e.id, ipKey: e.ipKey, since: e.since, joined: true, name: e.name, colour: e.colour, pose: null, times: [], pings: [], dropped: [], lastJump: -Infinity, bad: 0, renamedAt: -Infinity, lastMsg: now });
       this.colourN++;
     }
   }
@@ -134,6 +135,7 @@ export class Room {
   onMessage(id, raw, now) {
     const p = this.players.get(id);
     if (!p) return { out: [] };
+    p.lastMsg = now;
     const bad = () => (++p.bad >= WORLD_BAD_MAX ? { out: [], close: 'bad' } : { out: [] });
     // A frame dropped for rate is free for the sender and billed to us: too many of them and the socket goes, the address rests
     const flooded = () => {
@@ -199,6 +201,14 @@ export class Room {
     this.dirty.delete(id);
     if (!p.joined) return { out: [] };
     return { out: [...this.broadcast({ t: 'leave', id }), ...this.broadcast({ t: 'n', online: this.online() })] };
+  }
+
+  /** Drop sockets nothing has been heard from for WORLD_IDLE_MS: browsers killed without a close frame. The shell closes them. */
+  reap(now) {
+    const dead = [...this.players.values()].filter(p => now - p.lastMsg > WORLD_IDLE_MS).map(p => p.id);
+    const out = [];
+    for (const id of dead) out.push(...this.close(id).out);
+    return { closed: dead, out };
   }
 
   /** For the admin: who's here (no addresses). */

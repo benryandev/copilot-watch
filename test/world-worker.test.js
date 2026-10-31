@@ -47,8 +47,8 @@ test('health ok; unknown 404', async () => {
 
 import { World } from '../src/world-worker.js';
 // A fake Durable Object context and socket: enough to drive the message path without WebSocketPair
-const fakeCtx = (sockets = []) => { const store = new Map(); return { storage: { get: async k => store.get(k), put: async (k, v) => store.set(k, v) }, getWebSockets: () => sockets, acceptWebSocket: () => {}, blockConcurrencyWhile: f => f() }; };
-const fakeWs = (att) => { let a = att; const sent = []; return { serializeAttachment: v => { a = v; }, deserializeAttachment: () => a, send: m => sent.push(JSON.parse(m)), close: () => {}, sent }; };
+const fakeCtx = (sockets = []) => { const store = new Map(); const ctx = { alarms: [], storage: { get: async k => store.get(k), put: async (k, v) => store.set(k, v), setAlarm: async t => ctx.alarms.push(t), getAlarm: async () => ctx.alarms.at(-1) ?? null }, getWebSockets: () => sockets, acceptWebSocket: () => {}, blockConcurrencyWhile: f => f() }; return ctx; };
+const fakeWs = (att) => { let a = att; const sent = []; const ws = { closed: null, serializeAttachment: v => { a = v; }, deserializeAttachment: () => a, send: m => sent.push(JSON.parse(m)), close: (c, r) => { ws.closed = [c, r]; }, sent }; return ws; };
 
 test('World re-serialises the socket attachment when a player renames, so a wake-up restores the new name', async () => {
   const w = new World(fakeCtx(), { KV: memKV(), RACE_ADMIN_TOKEN: 'x' });
@@ -62,4 +62,19 @@ test('World re-serialises the socket attachment when a player renames, so a wake
   const w2 = new World(fakeCtx([ws]), { KV: memKV(), RACE_ADMIN_TOKEN: 'x' });
   await w2.ready;
   assert.deepEqual(w2.room.who().map(p => p.name), ['Nova']);
+});
+
+test('World arms a reaper alarm when sockets exist, and alarm() closes the silent ones', async () => {
+  const ws = fakeWs({ id: 'z', name: 'Zombie', colour: '#fff', ipKey: 'k', since: 0 });
+  const ctx = fakeCtx([ws]);
+  const w = new World(ctx, { KV: memKV(), RACE_ADMIN_TOKEN: 'x' });
+  await w.ready;
+  assert.equal(ctx.alarms.length, 1, 'an alarm is set on restore when sockets exist');
+  assert.equal(w.room.online(), 1);
+  w.room.players.get('z').lastMsg = Date.now() - 120_000; // silent for two minutes
+  await w.alarm();
+  assert.deepEqual(ws.closed, [1001, 'idle']);
+  assert.equal(w.room.online(), 0);
+  assert.equal(w.sockets.size, 0);
+  assert.equal(ctx.alarms.length, 1, 'no further alarm once the room is empty');
 });

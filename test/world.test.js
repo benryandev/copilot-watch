@@ -1,5 +1,5 @@
 import test from 'node:test'; import assert from 'node:assert/strict';
-import { pickName, isReserved, RESERVED, parsePose, WORLD_RADIUS, WORLD_MAX_SPEED, WORLD_FRAME_MAX, Room, WORLD_MAX, WORLD_IP_MAX, COLOURS, offChecker, WORLD_FLOOD_BLOCK_MS } from '../src/world.js';
+import { pickName, isReserved, RESERVED, parsePose, WORLD_RADIUS, WORLD_MAX_SPEED, WORLD_FRAME_MAX, Room, WORLD_MAX, WORLD_IP_MAX, COLOURS, offChecker, WORLD_FLOOD_BLOCK_MS, WORLD_IDLE_MS } from '../src/world.js';
 
 test('pickName: clean names pass, reserved and rude fall back, owner may be Ben', () => {
   assert.deepEqual(pickName('Aveli'), { name: 'Aveli', fallback: false });
@@ -228,4 +228,17 @@ test('room: rename with the owner token may take a reserved name', () => {
   const r = room(); hi(r, 'a', 'A');
   assert.equal(to(r.onMessage('a', JSON.stringify({ t: 'name', name: 'Ben', owner: 'own' }), 1000).out, 'a')[0].name, 'Ben');
   assert.equal(to(r.onMessage('a', JSON.stringify({ t: 'name', name: 'Shan', owner: 'nope' }), 20000).out, 'a')[0].name, 'Driver 01');
+});
+
+test('room: reap drops sockets silent for over a minute, joined or not, and tells the others', () => {
+  const r = room(); hi(r, 'a', 'A', 0); hi(r, 'b', 'B', 0); r.open('c', { ipKey: 'kc' }, 0); // c never says hi
+  pose(r, 'b', 30_000);
+  assert.deepEqual(r.reap(59_000), { closed: [], out: [] });
+  const k = r.reap(61_000);
+  assert.deepEqual(k.closed.sort(), ['a', 'c']);
+  assert.deepEqual(to(k.out, 'b').map(m => m.t), ['leave', 'n']);
+  assert.equal(r.online(), 1);
+  assert.deepEqual(r.reap(90_000).closed, []); // b spoke at 30 s
+  assert.deepEqual(r.reap(90_001).closed, ['b']);
+  assert.equal(WORLD_IDLE_MS, 60_000);
 });

@@ -1,7 +1,7 @@
 // copilot-world: the multiplayer room for the Strike ecosystem map (strike.benryan.com.au/ecosystem).
 // Its own worker, apart from copilot-watch, so a bad deploy or a Durable Object migration here can never touch the
 // trading alerts. One Durable Object ("main") holds everyone connected; src/world.js is the logic, this file the plumbing.
-import { Room, WORLD_OFF_KEY, offChecker } from './world.js';
+import { Room, WORLD_OFF_KEY, WORLD_IDLE_MS, offChecker } from './world.js';
 import { RACE_ORIGINS, RACE_ADMIN_HEADER } from './race.js';
 import { safeEqual } from './telegram.js';
 
@@ -64,8 +64,25 @@ export class World {
         this.sockets.set(a.id, ws);
         if (a.name) joined.push(a); else this.room.open(a.id, { ipKey: a.ipKey }, now);
       }
-      this.room.restore(joined);
+      this.room.restore(joined, now);
+      if (this.sockets.size) await this.armReaper();
     });
+  }
+
+  /** One alarm a minute while anyone is connected: it drops sockets that have gone silent (see Room.reap). */
+  async armReaper() {
+    if (this.reaperArmed) return;
+    this.reaperArmed = true;
+    await this.ctx.storage.setAlarm(Date.now() + WORLD_IDLE_MS);
+  }
+
+  async alarm() {
+    await this.ready;
+    this.reaperArmed = false;
+    const k = this.room.reap(Date.now());
+    this.deliver(k.out);
+    for (const id of k.closed) { try { this.sockets.get(id)?.close(1001, 'idle'); } catch { /* gone */ } this.sockets.delete(id); }
+    if (this.sockets.size) await this.armReaper();
   }
 
   deliver(out) {
@@ -95,6 +112,7 @@ export class World {
       this.ctx.acceptWebSocket(server);
       server.serializeAttachment({ id, ipKey, since: now });
       this.sockets.set(id, server);
+      await this.armReaper();
       return new Response(null, { status: 101, webSocket: client });
     }
     if (pathname === '/presence') return json({ online: this.room.online() }, 200, '');
