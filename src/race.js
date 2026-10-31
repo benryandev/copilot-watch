@@ -80,26 +80,26 @@ const minMs = metres => (metres * 1000) / RACE_MAX_SPEED;
 /** Validate an optional ghost trace against the lap time and the track. Returns {ok, trace} (null when none given) or {ok: false, error}. */
 export function parseTrace(trace, ms, t) {
   if (trace === undefined || trace === null) return { ok: true, trace: null };
-  const bad = { ok: false, error: 'bad_trace' };
-  if (!Array.isArray(trace) || trace.length < RACE_TRACE_MIN || trace.length > RACE_TRACE_MAX) return bad;
+  const bad = why => ({ ok: false, error: 'bad_trace', why }); // why: shape | range | order | speed | ends | path (for the log)
+  if (!Array.isArray(trace) || trace.length < RACE_TRACE_MIN || trace.length > RACE_TRACE_MAX) return bad('shape');
   const out = []; let path = 0, prev = null;
   for (const s of trace) {
-    if (!Array.isArray(s) || s.length !== 4) return bad;
+    if (!Array.isArray(s) || s.length !== 4) return bad('shape');
     const [tt, x, z, h] = s;
-    if (!Number.isSafeInteger(tt) || tt < 0 || tt > ms) return bad;
-    if (![x, z, h].every(v => typeof v === 'number' && Number.isFinite(v)) || Math.abs(x) > 2000 || Math.abs(z) > 2000 || Math.abs(h) > 100) return bad;
+    if (!Number.isSafeInteger(tt) || tt < 0 || tt > ms) return bad('range');
+    if (![x, z, h].every(v => typeof v === 'number' && Number.isFinite(v)) || Math.abs(x) > 2000 || Math.abs(z) > 2000 || Math.abs(h) > 100) return bad('range');
     if (prev) {
       const dt = tt - prev[0];
-      if (dt <= 0) return bad;
+      if (dt <= 0) return bad('order');
       const d = Math.hypot(x - prev[1], z - prev[2]);
-      if (d / (dt / 1000) > RACE_TRACE_MAX_SPEED) return bad;
+      if (d / (dt / 1000) > RACE_TRACE_MAX_SPEED) return bad('speed');
       path += d;
     }
     out.push([tt, Math.round(x * 10) / 10, Math.round(z * 10) / 10, Math.round(h * 100) / 100]);
     prev = s;
   }
-  if (out[0][0] > 1000 || ms - out[out.length - 1][0] > 1500) return bad; // starts on the line, ends at the line
-  if (path < RACE_TRACE_MIN_PATH * t.length) return bad;
+  if (out[0][0] > 1000 || ms - out[out.length - 1][0] > 1500) return bad('ends'); // starts on the line, ends at the line
+  if (path < RACE_TRACE_MIN_PATH * t.length) return bad('path');
   return { ok: true, trace: out };
 }
 
@@ -119,9 +119,10 @@ export function parseTime(body) {
   const at = [...splits, ms], dist = [...cps, t.length];
   for (let i = 0; i < at.length; i++)
     if (at[i] - (i ? at[i - 1] : 0) < ((dist[i] - (i ? dist[i - 1] : 0)) * 1000) / RACE_SEG_MAX_SPEED) return { ok: false, error: 'segment_too_fast', segment: i };
+  // The trace only feeds the ghost: a bad one is dropped, the lap stands (the splits and lap checks above are the anti-cheat)
   const tr = parseTrace(body.trace, ms, t);
-  if (!tr.ok) return tr;
-  return { ok: true, entry: { track: body.track, name: n.name, key: n.name.toLowerCase(), ms, splits: [...splits], trace: tr.trace } };
+  const entry = { track: body.track, name: n.name, key: n.name.toLowerCase(), ms, splits: [...splits], trace: tr.ok ? tr.trace : null };
+  return tr.ok ? { ok: true, entry } : { ok: true, entry, traceDropped: tr.why };
 }
 
 // ---- board ----
@@ -242,6 +243,7 @@ export async function handleRaceApi(req, env, { now = Date.now() } = {}) {
     }
     await kv.put(k, String(now), { expirationTtl: Math.max(60, RACE_RATE_SEC) }); // KV won't take a TTL under 60 s; the window is checked above
     const p = parseTime(r.body);
+    if (p.ok && p.traceDropped) console.log('race trace dropped', JSON.stringify({ why: p.traceDropped, ms: r.body.ms, name: r.body.name, trace: Array.isArray(r.body.trace) ? r.body.trace.slice(0, 3).concat([['…', r.body.trace.length]], r.body.trace.slice(-3)) : typeof r.body.trace }));
     if (!p.ok) {
       // Rejections are rare and the message to the player is short: keep the detail in the log for a tail
       console.log('race reject', JSON.stringify({ error: p.error, segment: p.segment ?? null, ms: r.body?.ms, splits: r.body?.splits, trace: Array.isArray(r.body?.trace) ? r.body.trace.length : null, name: r.body?.name }));
@@ -249,7 +251,7 @@ export async function handleRaceApi(req, env, { now = Date.now() } = {}) {
     }
     const { rank, best, rows } = await addTime(kv, p.entry, now);
     await countEvent(kv, p.entry.track, 'post', ip, now);
-    return json({ ok: true, rank, best, top: pub(rows) }, 200, origin);
+    return json({ ok: true, rank, best, top: pub(rows), ...(p.traceDropped ? { traceDropped: p.traceDropped } : {}) }, 200, origin);
   }
 
   // Funnel event from the page (sent with sendBeacon, so text/plain and no preflight). No reply body.

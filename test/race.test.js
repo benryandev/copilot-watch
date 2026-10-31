@@ -279,9 +279,15 @@ test('ghost trace: bad traces are refused', () => {
     'ends early': tr.filter(s => s[0] < L.ms - 2000),
     'path too short': tr.map(s => [s[0], s[1] * 0.5, 0, 0]),
   };
-  for (const [what, trace] of Object.entries(cases)) assert.equal(parseTrace(trace, L.ms, T).error, 'bad_trace', what);
-  assert.equal(parseTime(good({ trace: 'x' })).error, 'bad_trace');
-  assert.ok(parseTime(good({ trace: tr })).ok);
+  const why = {};
+  for (const [what, trace] of Object.entries(cases)) { const r = parseTrace(trace, L.ms, T); assert.equal(r.error, 'bad_trace', what); why[what] = r.why; }
+  assert.deepEqual(why, { 'not an array': 'shape', 'one sample': 'shape', 'too many samples': 'shape', 'short sample': 'shape', 'time not increasing': 'order',
+    'time past the lap': 'range', 'non-finite': 'range', 'off the map': 'range', 'too fast between samples': 'speed', 'starts late': 'ends', 'ends early': 'ends', 'path too short': 'path' });
+  // A bad trace costs the ghost, never the lap: the time is kept and the client is told the path was dropped
+  const dropped = parseTime(good({ trace: 'x' }));
+  assert.ok(dropped.ok); assert.equal(dropped.entry.trace, null); assert.equal(dropped.traceDropped, 'shape');
+  const kept = parseTime(good({ trace: tr }));
+  assert.ok(kept.ok); assert.equal(kept.traceDropped, undefined); assert.ok(Array.isArray(kept.entry.trace));
   assert.ok(parseTime(good({ trace: null })).ok);
   // a real-looking body with 400 samples fits under the size limit
   assert.ok(JSON.stringify(good({ trace: traceFor(L, Math.ceil(L.ms / (RACE_TRACE_MAX - 1))) })).length < RACE_MAX_BODY);
