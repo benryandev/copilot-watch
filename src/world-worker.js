@@ -121,7 +121,7 @@ export class World {
     const res = this.room.onMessage(id, typeof message === 'string' ? message : '', Date.now());
     this.deliver(res.out);
     const a = this.room.attachment(id);
-    if (a && !ws.deserializeAttachment()?.name) ws.serializeAttachment(a);
+    if (a && ws.deserializeAttachment()?.name !== a.name) ws.serializeAttachment(a); // first hi, and every rename
     if (res.flushIn) this.flushLater(res.flushIn);
     if (res.close) { this.deliver(this.room.close(id).out); this.sockets.delete(id); ws.close(1008, res.close); }
   }

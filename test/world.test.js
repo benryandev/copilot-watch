@@ -1,5 +1,5 @@
 import test from 'node:test'; import assert from 'node:assert/strict';
-import { pickName, isReserved, RESERVED, parsePose, WORLD_RADIUS, WORLD_MAX_SPEED, WORLD_FRAME_MAX, Room, WORLD_MAX, WORLD_IP_MAX, COLOURS, offChecker } from '../src/world.js';
+import { pickName, isReserved, RESERVED, parsePose, WORLD_RADIUS, WORLD_MAX_SPEED, WORLD_FRAME_MAX, Room, WORLD_MAX, WORLD_IP_MAX, COLOURS, offChecker, WORLD_FLOOD_BLOCK_MS } from '../src/world.js';
 
 test('pickName: clean names pass, reserved and rude fall back, owner may be Ben', () => {
   assert.deepEqual(pickName('Aveli'), { name: 'Aveli', fallback: false });
@@ -191,4 +191,41 @@ test('offChecker: reads the switch at most once per ttl and remembers the answer
   assert.equal(await paused(29_999), false); assert.equal(await paused(30_000), true); assert.equal(reads, 2);
   value = null;
   assert.equal(await paused(59_000), true); assert.equal(await paused(61_000), false); assert.equal(reads, 3);
+});
+
+// ---- review fixes ----
+test('isReserved: Cyrillic and Greek look-alikes count', () => {
+  assert.equal(isReserved('Вen'), true); // Cyrillic В
+  assert.equal(isReserved('Ѕhan'), true); // Cyrillic Ѕ
+  assert.equal(isReserved('Βеn'), true); // Greek Β + Cyrillic е
+  assert.equal(isReserved('Benny'), false);
+  assert.equal(pickName('Вen').name, 'Driver 01');
+});
+
+test('room: ping storms and rate-dropped floods close the socket and block the address briefly', () => {
+  const r = room(); hi(r, 'a', 'A'); hi(r, 'b', 'B');
+  let closed = null;
+  for (let i = 0; i < 400 && !closed; i++) { const res = pose(r, 'a', i, { x: i % 50 }); if (res.close) closed = res.close; }
+  assert.equal(closed, 'flood');
+  r.close('a', 500);
+  assert.deepEqual(r.open('a2', { ipKey: 'ka' }, 600), { ok: false, error: 'blocked' });
+  assert.equal(r.open('a2', { ipKey: 'ka' }, 600 + WORLD_FLOOD_BLOCK_MS + 1).ok, true);
+  assert.equal(r.online(), 1); // b is untouched by a's flood; a2 has opened but not said hi
+  const r2 = room(); hi(r2, 'p', 'P');
+  closed = null;
+  for (let i = 0; i < 400 && !closed; i++) { const res = r2.onMessage('p', JSON.stringify({ t: 'ping', echo: i }), i * 10); if (res.close) closed = res.close; }
+  assert.equal(closed, 'flood');
+});
+
+test('room: a ping neither resets the bad count nor counts as bad at a sane rate', () => {
+  const r = room(); hi(r, 'a', 'A');
+  r.onMessage('a', 'x', 0); r.onMessage('a', 'x', 1);
+  assert.equal(r.onMessage('a', JSON.stringify({ t: 'ping', echo: 1 }), 2).close, undefined);
+  assert.equal(r.onMessage('a', 'x', 3).close, 'bad');
+});
+
+test('room: rename with the owner token may take a reserved name', () => {
+  const r = room(); hi(r, 'a', 'A');
+  assert.equal(to(r.onMessage('a', JSON.stringify({ t: 'name', name: 'Ben', owner: 'own' }), 1000).out, 'a')[0].name, 'Ben');
+  assert.equal(to(r.onMessage('a', JSON.stringify({ t: 'name', name: 'Shan', owner: 'nope' }), 20000).out, 'a')[0].name, 'Driver 01');
 });

@@ -44,3 +44,22 @@ test('health ok; unknown 404', async () => {
   assert.equal((await handler.fetch(req('/nope'), e)).status, 404);
   assert.equal((await handler.fetch(req('/presence', { method: 'OPTIONS' }), e)).status, 204);
 });
+
+import { World } from '../src/world-worker.js';
+// A fake Durable Object context and socket: enough to drive the message path without WebSocketPair
+const fakeCtx = (sockets = []) => { const store = new Map(); return { storage: { get: async k => store.get(k), put: async (k, v) => store.set(k, v) }, getWebSockets: () => sockets, acceptWebSocket: () => {}, blockConcurrencyWhile: f => f() }; };
+const fakeWs = (att) => { let a = att; const sent = []; return { serializeAttachment: v => { a = v; }, deserializeAttachment: () => a, send: m => sent.push(JSON.parse(m)), close: () => {}, sent }; };
+
+test('World re-serialises the socket attachment when a player renames, so a wake-up restores the new name', async () => {
+  const w = new World(fakeCtx(), { KV: memKV(), RACE_ADMIN_TOKEN: 'x' });
+  await w.ready;
+  const ws = fakeWs({ id: 'a', ipKey: 'k', since: 0 });
+  w.room.open('a', { ipKey: 'k' }, 0); w.sockets.set('a', ws);
+  await w.webSocketMessage(ws, JSON.stringify({ t: 'hi', v: 1, name: 'Aveli' }));
+  assert.equal(ws.deserializeAttachment().name, 'Aveli');
+  await w.webSocketMessage(ws, JSON.stringify({ t: 'name', name: 'Nova' }));
+  assert.equal(ws.deserializeAttachment().name, 'Nova');
+  const w2 = new World(fakeCtx([ws]), { KV: memKV(), RACE_ADMIN_TOKEN: 'x' });
+  await w2.ready;
+  assert.deepEqual(w2.room.who().map(p => p.name), ['Nova']);
+});

@@ -24,7 +24,11 @@ export const WORLD_FRAME_MAX = 256; // bytes: a pose is ~50, a hi ~80
 export const RESERVED = ['ben', 'ben ryan', 'benryan', 'benryanme', 'shan', 'strike', 'strike finance', 'strikefinance', 'strike team',
   'admin', 'mod', 'moderator', 'intern'];
 const LEET = { 0: 'o', 1: 'i', 3: 'e', 4: 'a', 5: 's', 7: 't', '@': 'a', $: 's', '!': 'i' };
-const fold = s => String(s).normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/[013457@$!]/g, c => LEET[c] ?? c).replace(/[^a-z]/g, '');
+// Cyrillic and Greek letters that look like Latin ones (lower case, applied after toLowerCase), so "Вen" is still Ben
+const LOOKALIKE = { а: 'a', в: 'b', е: 'e', к: 'k', м: 'm', н: 'h', о: 'o', р: 'p', с: 'c', т: 't', у: 'y', х: 'x', і: 'i', ј: 'j', ѕ: 's', ԁ: 'd', ԛ: 'q', ԝ: 'w', ё: 'e',
+  α: 'a', β: 'b', ε: 'e', ζ: 'z', η: 'h', ι: 'i', κ: 'k', μ: 'm', ν: 'v', ο: 'o', ρ: 'p', τ: 't', υ: 'y', χ: 'x' };
+const LOOKALIKE_RE = new RegExp(`[${Object.keys(LOOKALIKE).join('')}]`, 'gu');
+const fold = s => String(s).normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(LOOKALIKE_RE, c => LOOKALIKE[c]).replace(/[013457@$!]/g, c => LEET[c] ?? c).replace(/[^a-z]/g, '');
 const RESERVED_FOLDED = new Set(RESERVED.map(fold));
 
 /** True when the name is one of the reserved names (Ben, Shan, Strike and staff-sounding words), however spelled. */
@@ -71,6 +75,10 @@ export const WORLD_SNAPSHOT_MS = 100; // at most one snapshot per 100 ms
 export const WORLD_RENAME_SEC = 10;
 export const WORLD_BAD_MAX = 3; // bad frames in a row before the socket is closed
 export const WORLD_JUMP_MS = 1000; // one teleport flag per second
+export const WORLD_PING_MAX_HZ = 2;
+export const WORLD_FLOOD_MAX = 100; // frames dropped for rate inside 10 s before the socket is closed as a flood
+export const WORLD_FLOOD_WINDOW_MS = 10_000;
+export const WORLD_FLOOD_BLOCK_MS = 60_000; // a flooder's address is refused for this long
 // District colours from the map (content.js), minus the player's own hub green, so your car is always the green one.
 export const COLOURS = ['#22d3ee', '#facc15', '#ec4899', '#3b82f6', '#f97316', '#a78bfa', '#0fb89c', '#94a3b8'];
 
@@ -99,7 +107,7 @@ export class Room {
     if (this.blocked('s:' + id, now) || this.blocked('i:' + ipKey, now)) return { ok: false, error: 'blocked' };
     if ([...this.players.values()].filter(p => p.ipKey === ipKey).length >= WORLD_IP_MAX) return { ok: false, error: 'ip' };
     if (this.players.size >= WORLD_MAX) return { ok: false, error: 'full' };
-    this.players.set(id, { id, ipKey, since: now, joined: false, name: null, colour: null, pose: null, times: [], lastJump: -Infinity, bad: 0, renamedAt: -Infinity });
+    this.players.set(id, { id, ipKey, since: now, joined: false, name: null, colour: null, pose: null, times: [], pings: [], dropped: [], lastJump: -Infinity, bad: 0, renamedAt: -Infinity });
     return { ok: true };
   }
 
@@ -113,7 +121,7 @@ export class Room {
   restore(entries) {
     for (const e of entries) {
       if (!e?.id) continue;
-      this.players.set(e.id, { id: e.id, ipKey: e.ipKey, since: e.since, joined: true, name: e.name, colour: e.colour, pose: null, times: [], lastJump: -Infinity, bad: 0, renamedAt: -Infinity });
+      this.players.set(e.id, { id: e.id, ipKey: e.ipKey, since: e.since, joined: true, name: e.name, colour: e.colour, pose: null, times: [], pings: [], dropped: [], lastJump: -Infinity, bad: 0, renamedAt: -Infinity });
       this.colourN++;
     }
   }
@@ -127,6 +135,15 @@ export class Room {
     const p = this.players.get(id);
     if (!p) return { out: [] };
     const bad = () => (++p.bad >= WORLD_BAD_MAX ? { out: [], close: 'bad' } : { out: [] });
+    // A frame dropped for rate is free for the sender and billed to us: too many of them and the socket goes, the address rests
+    const flooded = () => {
+      p.dropped = p.dropped.filter(t => now - t < WORLD_FLOOD_WINDOW_MS);
+      p.dropped.push(now);
+      if (p.dropped.length <= WORLD_FLOOD_MAX) return { out: [] };
+      this.blocks['i:' + p.ipKey] = now + WORLD_FLOOD_BLOCK_MS;
+      return { out: [], close: 'flood' };
+    };
+    const over = (times, hz) => { const keep = times.filter(t => now - t < 1000); times.length = 0; times.push(...keep); if (keep.length >= hz) return true; times.push(now); return false; };
     if (typeof raw !== 'string' || raw.length > WORLD_FRAME_MAX) return bad();
     let m;
     try { m = JSON.parse(raw); } catch { return bad(); }
@@ -140,15 +157,13 @@ export class Room {
       return { out: [msg(id, { t: 'ok', id, name: p.name, colour: p.colour, now, peers }),
         ...this.broadcast({ t: 'join', id, name: p.name, colour: p.colour }, id), ...this.broadcast({ t: 'n', online: this.online() }, id)] };
     }
-    if (m.t === 'ping') { p.bad = 0; return { out: [msg(id, { t: 'pong', now, echo: m.echo })] }; }
+    if (m.t === 'ping') return over(p.pings, WORLD_PING_MAX_HZ) ? flooded() : { out: [msg(id, { t: 'pong', now, echo: m.echo })] };
     if (!p.joined) return bad();
     if (m.t === 'p') {
       const pose = parsePose(m);
       if (!pose.ok) return bad();
       p.bad = 0;
-      p.times = p.times.filter(t => now - t < 1000);
-      if (p.times.length >= WORLD_POSE_MAX_HZ) return { out: [] }; // flood: dropped, not fatal
-      p.times.push(now);
+      if (over(p.times, WORLD_POSE_MAX_HZ)) return flooded(); // dropped; a sustained flood closes the socket
       if (pose.j) { if (now - p.lastJump < WORLD_JUMP_MS) pose.j = false; else p.lastJump = now; }
       p.pose = pose;
       this.dirty.add(id);
@@ -160,7 +175,8 @@ export class Room {
       if (now - p.renamedAt < WORLD_RENAME_SEC * 1000) return { out: [msg(id, { t: 'err', error: 'rate' })] };
       p.renamedAt = now;
       const taken = this.taken(); taken.delete(p.name.toLowerCase());
-      p.name = pickName(m.name, { owner: false, taken, next: () => this.nextDriver() }).name;
+      const owner = !!this.ownerToken && typeof m.owner === 'string' && m.owner === this.ownerToken;
+      p.name = pickName(m.name, { owner, taken, next: () => this.nextDriver() }).name;
       return { out: [msg(id, { t: 'named', name: p.name }), ...this.broadcast({ t: 'rename', id, name: p.name }, id)] };
     }
     return bad();
