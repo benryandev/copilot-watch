@@ -273,7 +273,7 @@ test('ghost trace: bad traces are refused', () => {
     'time past the lap': [...tr.slice(0, -1), [L.ms + 1, T.length, 0, 0]],
     'non-finite': tr.map((s, i) => (i === 3 ? [s[0], NaN, s[2], s[3]] : s)),
     'off the map': tr.map((s, i) => (i === 3 ? [s[0], 5000, s[2], s[3]] : s)),
-    'too fast between samples': tr.map((s, i) => (i === 3 ? [s[0], s[1] + 4, s[2], s[3]] : s)), // +4 m in 100 ms = 40 m/s
+    'too fast between samples': tr.map((s, i) => (i === 3 ? [s[0], s[1] + 5, s[2], s[3]] : s)), // +5 m in 100 ms = 50 m/s
     'starts late': tr.filter(s => s[0] > 1200),
     'ends early': tr.filter(s => s[0] < L.ms - 2000),
     'path too short': tr.map(s => [s[0], s[1] * 0.5, 0, 0]),

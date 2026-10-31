@@ -17,6 +17,10 @@ export const RACE_KEEP = 100, RACE_SHOW = 10, RACE_RATE_SEC = 30, RACE_MAX_BODY 
 export const RACE_TRACE_MIN = 2, RACE_TRACE_MAX = 400;
 /** A trace must cover at least this share of the lap length (an inside line is shorter than the centreline, a fake is far shorter). */
 export const RACE_TRACE_MIN_PATH = 0.7;
+/** Fastest believable speed between two trace samples. Looser than the segment check (RACE_MAX_SPEED): samples are 100 ms apart
+ * with positions rounded to 0.1 m, and a landing or a nudge off a wall moves the car a little between frames. Ben's first real
+ * lap (31 Oct 2026) peaked at 29.3 m/s between samples; the lap itself averaged 25 m/s. A teleport is hundreds of m/s. */
+export const RACE_TRACE_MAX_SPEED = 40;
 export const RACE_ADMIN_HEADER = 'x-race-admin';
 // Funnel stages, in order. "post" is counted here when a time is accepted; the page sends the rest.
 export const RACE_EVENTS = ['open', 'found', 'start', 'finish', 'post'];
@@ -88,7 +92,7 @@ export function parseTrace(trace, ms, t) {
       const dt = tt - prev[0];
       if (dt <= 0) return bad;
       const d = Math.hypot(x - prev[1], z - prev[2]);
-      if (d / (dt / 1000) > RACE_MAX_SPEED) return bad;
+      if (d / (dt / 1000) > RACE_TRACE_MAX_SPEED) return bad;
       path += d;
     }
     out.push([tt, Math.round(x * 10) / 10, Math.round(z * 10) / 10, Math.round(h * 100) / 100]);
