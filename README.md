@@ -160,6 +160,7 @@ A second worker in this repo, `copilot-world` (`wrangler.world.toml`, entry `src
 | `GET /presence` | `{online}`, public, CORS for the race origins. |
 | `GET /who` | Admin (`x-race-admin`): `{online, who: [{id, name, colour, x, z, since}]}`. Never addresses. |
 | `POST /kick` | Admin: `{id?, name?, minutes = 60}` closes matching sockets and blocks that session and address hash for the period. |
+| `POST /restart` | Admin: resets the room object so it picks up the latest deploy (a busy object otherwise keeps old code; everyone reconnects within a second). `GET /presence` shows `version` so you can tell. Run after every `deploy:world`. |
 
 Names go through the leaderboard's `cleanName`/`isRude`, then a reserved list (just `BenRyan`, Ben's own handle, since 31 Oct; any other Ben or Shan may be themselves): anything refused becomes `Driver NN`; two live players asking for the same name get `Name` and `Name (2)`. The owner token (`WORLD_OWNER_TOKEN` secret, sent as `owner` in `hi` or `name`) unlocks every reserved name; a guest token (`WORLD_GUEST_TOKENS` secret, JSON `{"<token>": ["Shan"]}`) unlocks only the names listed against it. The page stores either from `#owner=<token>` in the URL, so a person can be sent a link. Rotate by changing the secret. Secrets: `pnpm dlx wrangler@4 secret put RACE_ADMIN_TOKEN -c wrangler.world.toml` and the same for `WORLD_OWNER_TOKEN`.
 

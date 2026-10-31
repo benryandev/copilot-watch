@@ -25,6 +25,8 @@ test('ws upgrade: wrong origin 403, kill switch 503, otherwise forwarded to the 
 
 test('presence is public with CORS for race origins; who and kick need the admin header', async () => {
   const e = env();
+  assert.equal((await handler.fetch(req('/restart', { method: 'POST' }), e)).status, 403);
+  assert.equal((await (await handler.fetch(req('/restart', { method: 'POST', headers: { [RACE_ADMIN_HEADER]: 'admin-1' } }), e)).json()).forwarded, '/restart');
   const p = await handler.fetch(req('/presence'), e);
   assert.equal(p.status, 200); assert.equal(p.headers.get('access-control-allow-origin'), O);
   assert.equal((await p.json()).forwarded, '/presence');
@@ -47,7 +49,7 @@ test('health ok; unknown 404', async () => {
 
 import { World } from '../src/world-worker.js';
 // A fake Durable Object context and socket: enough to drive the message path without WebSocketPair
-const fakeCtx = (sockets = []) => { const store = new Map(); const ctx = { alarms: [], storage: { get: async k => store.get(k), put: async (k, v) => store.set(k, v), setAlarm: async t => ctx.alarms.push(t), getAlarm: async () => ctx.alarms.at(-1) ?? null }, getWebSockets: () => sockets, acceptWebSocket: () => {}, blockConcurrencyWhile: f => f() }; return ctx; };
+const fakeCtx = (sockets = []) => { const store = new Map(); const ctx = { alarms: [], aborted: null, abort: r => { ctx.aborted = r; }, storage: { get: async k => store.get(k), put: async (k, v) => store.set(k, v), setAlarm: async t => ctx.alarms.push(t), getAlarm: async () => ctx.alarms.at(-1) ?? null }, getWebSockets: () => sockets, acceptWebSocket: () => {}, blockConcurrencyWhile: f => f() }; return ctx; };
 const fakeWs = (att) => { let a = att; const sent = []; const ws = { closed: null, serializeAttachment: v => { a = v; }, deserializeAttachment: () => a, send: m => sent.push(JSON.parse(m)), close: (c, r) => { ws.closed = [c, r]; }, sent }; return ws; };
 
 test('World re-serialises the socket attachment when a player renames, so a wake-up restores the new name', async () => {
@@ -94,4 +96,13 @@ test('World refreshes the attachment\'s heardAt at most every 30 s of messages',
   w.room.players.get('a').lastMsg = first + 31_000; ws.serializeAttachment({ ...ws.deserializeAttachment(), heardAt: first - 31_000 });
   await w.webSocketMessage(ws, JSON.stringify({ t: 'p', x: 1, z: 1, h: 0, s: 0 }));
   assert.ok(ws.deserializeAttachment().heardAt >= first, 'rewritten once the stored time is over 30 s old');
+});
+
+test('World /restart aborts the object so the next request runs the newly deployed code', async () => {
+  const ctx = fakeCtx();
+  const w = new World(ctx, { KV: memKV(), RACE_ADMIN_TOKEN: 'x' });
+  await w.ready;
+  const r = await w.fetch(new Request('https://w/restart', { method: 'POST' }));
+  assert.equal(r.status, 200);
+  assert.equal(ctx.aborted, 'restart');
 });

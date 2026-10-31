@@ -1,7 +1,7 @@
 // copilot-world: the multiplayer room for the Strike ecosystem map (strike.benryan.com.au/ecosystem).
 // Its own worker, apart from copilot-watch, so a bad deploy or a Durable Object migration here can never touch the
 // trading alerts. One Durable Object ("main") holds everyone connected; src/world.js is the logic, this file the plumbing.
-import { Room, WORLD_OFF_KEY, WORLD_IDLE_MS, offChecker } from './world.js';
+import { Room, WORLD_OFF_KEY, WORLD_IDLE_MS, WORLD_VERSION, offChecker } from './world.js';
 import { RACE_ORIGINS, RACE_ADMIN_HEADER } from './race.js';
 import { safeEqual } from './telegram.js';
 
@@ -30,7 +30,7 @@ export default {
       const r = await room(env).fetch(req);
       return new Response(r.body, { status: r.status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store', ...cors(origin) } });
     }
-    if ((pathname === '/who' && req.method === 'GET') || (pathname === '/kick' && req.method === 'POST')) {
+    if ((pathname === '/who' && req.method === 'GET') || ((pathname === '/kick' || pathname === '/restart') && req.method === 'POST')) {
       if (!isAdmin(req, env)) return json({ error: 'forbidden' }, 403, origin);
       return room(env).fetch(req);
     }
@@ -118,7 +118,7 @@ export class World {
       await this.armReaper();
       return new Response(null, { status: 101, webSocket: client });
     }
-    if (pathname === '/presence') return json({ online: this.room.online() }, 200, '');
+    if (pathname === '/presence') return json({ online: this.room.online(), version: WORLD_VERSION }, 200, '');
     if (pathname === '/who') return json({ online: this.room.online(), who: this.room.who() }, 200, '');
     if (pathname === '/kick') {
       let body = {};
@@ -128,6 +128,13 @@ export class World {
       this.deliver(k.out);
       for (const id of k.closed) { try { this.sockets.get(id)?.close(1008, 'kicked'); } catch { /* gone */ } this.sockets.delete(id); }
       return json({ closed: k.closed, until: k.closed.length ? k.blocks['s:' + k.closed[0]] : null }, 200, '');
+    }
+    if (pathname === '/restart') {
+      // A busy object keeps running the code it started with; abort() resets it and the next request instantiates the new
+      // deployment. Hibernated sockets reconnect on their own (the client retries within a second).
+      const res = json({ ok: true, online: this.room.online() }, 200, '');
+      setTimeout(() => this.ctx.abort('restart'), 50);
+      return res;
     }
     return new Response('Not found', { status: 404 });
   }

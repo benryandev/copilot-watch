@@ -2,6 +2,7 @@
 // Pure logic, no Cloudflare types; the Durable Object shell in world-worker.js wires it to websockets.
 import { cleanName } from './race.js';
 
+export const WORLD_VERSION = '2026-10-31.8'; // bumped on deploy so /presence shows which code the room runs
 export const WORLD_OFF_KEY = 'world:off'; // any value under this KV key pauses new connections and closes live ones
 export const WORLD_OFF_TTL_MS = 30_000; // how long the room trusts its last read of the kill switch
 
