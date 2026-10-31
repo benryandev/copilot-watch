@@ -31,7 +31,7 @@ try {
   const s = await b.until(m => m.t === 's' && m.p.some(p => p[0] === okA.id), 1000);
   const row = s.p.find(p => p[0] === okA.id);
   if (row[1] !== 12.3 || row[2] !== -40) fail(`pose ${JSON.stringify(row)}`);
-  b.send({ t: 'name', name: 'Shan' });
+  b.send({ t: 'name', name: 'BenRyan' });
   const named = await b.until(m => m.t === 'named');
   if (!named.name.startsWith('Driver ')) fail(`reserved name let through: ${named.name}`);
   await a.until(m => m.t === 'rename' && m.id === okB.id);

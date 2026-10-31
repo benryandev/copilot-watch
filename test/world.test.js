@@ -3,15 +3,15 @@ import { pickName, isReserved, RESERVED, parsePose, WORLD_RADIUS, WORLD_MAX_SPEE
 
 test('pickName: clean names pass, reserved and rude fall back, owner may be Ben', () => {
   assert.deepEqual(pickName('Aveli'), { name: 'Aveli', fallback: false });
-  assert.deepEqual(pickName('Shan', { next: () => '07' }), { name: 'Driver 07', fallback: true, reason: 'reserved' });
-  assert.deepEqual(pickName('Sh@n'), { name: 'Driver 01', fallback: true, reason: 'reserved' });
-  assert.deepEqual(pickName('STRIKE team'), { name: 'Driver 01', fallback: true, reason: 'reserved' });
-  assert.deepEqual(pickName('Ben', { owner: true }), { name: 'Ben', fallback: false });
-  assert.deepEqual(pickName('Ben'), { name: 'Driver 01', fallback: true, reason: 'reserved' });
+  assert.deepEqual(pickName('BenRyan', { next: () => '07' }), { name: 'Driver 07', fallback: true, reason: 'reserved' });
+  assert.deepEqual(pickName('B3n Ry@n'), { name: 'Driver 01', fallback: true, reason: 'reserved' });
+  assert.deepEqual(pickName('Strike team'), { name: 'Strike team', fallback: false }); // free since 31 Oct
+  assert.deepEqual(pickName('BenRyan', { owner: true }), { name: 'BenRyan', fallback: false });
+  assert.deepEqual(pickName('Ben'), { name: 'Ben', fallback: false }); assert.deepEqual(pickName('Shan'), { name: 'Shan', fallback: false }); // another Ben or Shan may be themselves
   assert.deepEqual(pickName('fuck'), { name: 'Driver 01', fallback: true, reason: 'rude' });
   assert.deepEqual(pickName(undefined), { name: 'Driver 01', fallback: true, reason: 'bad' });
   assert.deepEqual(pickName('x'.repeat(21)), { name: 'Driver 01', fallback: true, reason: 'bad' });
-  assert.ok(RESERVED.includes('shan'));
+  assert.deepEqual(RESERVED, ['benryan', 'benryanme']); assert.equal(isReserved('Shan'), false);
   assert.equal(isReserved('Bén Ryan'), true);
   assert.equal(isReserved('Benny'), false);
 });
@@ -43,7 +43,7 @@ const pose = (r, id, now, over = {}) => r.onMessage(id, JSON.stringify({ t: 'p',
 const snaps = out => out.filter(([, m]) => m.t === 's');
 
 test('room: hi joins, replies ok with peers, tells the others, counts', () => {
-  const r = room(); hi(r, 'a', 'Ben');
+  const r = room(); hi(r, 'a', 'BenRyan');
   const { out } = hi(r, 'b', 'Aveli', 10);
   const ok = to(out, 'b').find(m => m.t === 'ok');
   assert.equal(ok.id, 'b'); assert.equal(ok.name, 'Aveli'); assert.equal(ok.now, 10);
@@ -54,9 +54,9 @@ test('room: hi joins, replies ok with peers, tells the others, counts', () => {
 });
 
 test('room: owner token lets Ben be Ben; colours differ for the first eight', () => {
-  const r = room(); const { out } = hi(r, 'a', 'Ben', 0, { owner: 'own' });
-  assert.equal(to(out, 'a')[0].name, 'Ben');
-  assert.equal(to(hi(r, 'z', 'Ben', 0, { owner: 'wrong' }).out, 'z')[0].name, 'Driver 01');
+  const r = room(); const { out } = hi(r, 'a', 'BenRyan', 0, { owner: 'own' });
+  assert.equal(to(out, 'a')[0].name, 'BenRyan');
+  assert.equal(to(hi(r, 'z', 'BenRyan', 0, { owner: 'wrong' }).out, 'z')[0].name, 'Driver 01');
   const cols = new Set(); for (let i = 0; i < 8; i++) cols.add(to(hi(r, 'p' + i, 'P' + i).out, 'p' + i)[0].colour);
   assert.equal(cols.size, 8); assert.equal(COLOURS.length, 8);
 });
@@ -121,7 +121,7 @@ test('room: rename is filtered, rate-limited and broadcast', () => {
   assert.deepEqual(to(out, 'a'), [{ t: 'named', name: 'Aveli' }]);
   assert.deepEqual(to(out, 'b'), [{ t: 'rename', id: 'a', name: 'Aveli' }]);
   assert.deepEqual(to(r.onMessage('a', JSON.stringify({ t: 'name', name: 'Other' }), 6000).out, 'a'), [{ t: 'err', error: 'rate' }]);
-  assert.equal(to(r.onMessage('a', JSON.stringify({ t: 'name', name: 'Shan' }), 11000).out, 'a')[0].name, 'Driver 01');
+  assert.equal(to(r.onMessage('a', JSON.stringify({ t: 'name', name: 'BenRyan' }), 11000).out, 'a')[0].name, 'Driver 01');
   assert.equal(r.who().find(p => p.id === 'a').name, 'Driver 01');
 });
 
@@ -195,11 +195,11 @@ test('offChecker: reads the switch at most once per ttl and remembers the answer
 
 // ---- review fixes ----
 test('isReserved: Cyrillic and Greek look-alikes count', () => {
-  assert.equal(isReserved('Вen'), true); // Cyrillic В
-  assert.equal(isReserved('Ѕhan'), true); // Cyrillic Ѕ
-  assert.equal(isReserved('Βеn'), true); // Greek Β + Cyrillic е
+  assert.equal(isReserved('ВenRyan'), true); // Cyrillic capital Ve for B
+  assert.equal(isReserved('BеnRyаn'), true); // Cyrillic e and a
+  assert.equal(isReserved('ΒеnRyan'), true); // Greek Beta + Cyrillic e
   assert.equal(isReserved('Benny'), false);
-  assert.equal(pickName('Вen').name, 'Driver 01');
+  assert.equal(pickName('ВenRyan').name, 'Driver 01');
 });
 
 test('room: ping storms and rate-dropped floods close the socket and block the address briefly', () => {
@@ -226,8 +226,8 @@ test('room: a ping neither resets the bad count nor counts as bad at a sane rate
 
 test('room: rename with the owner token may take a reserved name', () => {
   const r = room(); hi(r, 'a', 'A');
-  assert.equal(to(r.onMessage('a', JSON.stringify({ t: 'name', name: 'Ben', owner: 'own' }), 1000).out, 'a')[0].name, 'Ben');
-  assert.equal(to(r.onMessage('a', JSON.stringify({ t: 'name', name: 'Shan', owner: 'nope' }), 20000).out, 'a')[0].name, 'Driver 01');
+  assert.equal(to(r.onMessage('a', JSON.stringify({ t: 'name', name: 'BenRyan', owner: 'own' }), 1000).out, 'a')[0].name, 'BenRyan');
+  assert.equal(to(r.onMessage('a', JSON.stringify({ t: 'name', name: 'BenRyan', owner: 'nope' }), 20000).out, 'a')[0].name, 'Driver 01');
 });
 
 test('room: reap drops sockets silent for over a minute, joined or not, and tells the others', () => {
@@ -254,24 +254,24 @@ test('room: restore keeps when each socket was last heard (from the attachment),
 
 test('room: a rejected rename keeps the Driver number you already wear and says why; a kept name says taken', () => {
   const r = room(); hi(r, 'a'); hi(r, 'b', 'Aveli'); // a is Driver 01
-  const first = to(r.onMessage('a', JSON.stringify({ t: 'name', name: 'Ben' }), 1000).out, 'a')[0];
-  assert.deepEqual(first, { t: 'named', name: 'Driver 01', reason: 'reserved', asked: 'Ben' });
+  const first = to(r.onMessage('a', JSON.stringify({ t: 'name', name: 'BenRyan' }), 1000).out, 'a')[0];
+  assert.deepEqual(first, { t: 'named', name: 'Driver 01', reason: 'reserved', asked: 'BenRyan' });
   const second = to(r.onMessage('a', JSON.stringify({ t: 'name', name: 'fuck' }), 12000).out, 'a')[0];
   assert.deepEqual(second, { t: 'named', name: 'Driver 01', reason: 'rude', asked: 'fuck' });
   const third = to(r.onMessage('a', JSON.stringify({ t: 'name', name: 'Aveli' }), 23000).out, 'a')[0];
   assert.deepEqual(third, { t: 'named', name: 'Aveli (2)', reason: 'taken', asked: 'Aveli' });
   const fourth = to(r.onMessage('a', JSON.stringify({ t: 'name', name: 'Nova' }), 34000).out, 'a')[0];
   assert.deepEqual(fourth, { t: 'named', name: 'Nova' });
-  assert.equal(pickName('Ben').reason, 'reserved'); assert.equal(pickName('').reason, 'bad'); assert.equal(pickName('Nova').reason, undefined);
+  assert.equal(pickName('BenRyan').reason, 'reserved'); assert.equal(pickName('').reason, 'bad'); assert.equal(pickName('Nova').reason, undefined);
 });
 
 test('room: a guest token unlocks only the reserved names it was issued for, on hi and on rename', () => {
-  const r = new Room({ ownerToken: 'own', guests: { 'shan-token': ['Shan'] } });
-  assert.equal(to(hi(r, 'a', 'Shan', 0, { owner: 'shan-token' }).out, 'a')[0].name, 'Shan');
-  assert.equal(to(hi(r, 'b', 'Ben', 0, { owner: 'shan-token' }).out, 'b')[0].name, 'Driver 01'); // not his to take
-  assert.equal(to(hi(r, 'c', 'Shan', 0, { owner: 'nope' }).out, 'c')[0].name, 'Driver 02');
-  assert.equal(to(r.onMessage('b', JSON.stringify({ t: 'name', name: 'Shan', owner: 'shan-token' }), 1000).out, 'b')[0].name, 'Shan (2)');
-  assert.equal(to(hi(r, 'd', 'Nova', 0, { owner: 'shan-token' }).out, 'd')[0].name, 'Nova'); // ordinary names unaffected
-  assert.equal(pickName('Shan', { allow: new Set(['shan']) }).name, 'Shan');
-  assert.equal(pickName('Ben', { allow: new Set(['shan']) }).name, 'Driver 01');
+  const r = new Room({ ownerToken: 'own', guests: { 'guest-token': ['benryanme'] } });
+  assert.equal(to(hi(r, 'a', 'benryanme', 0, { owner: 'guest-token' }).out, 'a')[0].name, 'benryanme');
+  assert.equal(to(hi(r, 'b', 'BenRyan', 0, { owner: 'guest-token' }).out, 'b')[0].name, 'Driver 01'); // not theirs to take
+  assert.equal(to(hi(r, 'c', 'benryanme', 0, { owner: 'nope' }).out, 'c')[0].name, 'Driver 02');
+  assert.equal(to(r.onMessage('b', JSON.stringify({ t: 'name', name: 'benryanme', owner: 'guest-token' }), 1000).out, 'b')[0].name, 'benryanme (2)');
+  assert.equal(to(hi(r, 'd', 'Nova', 0, { owner: 'guest-token' }).out, 'd')[0].name, 'Nova'); // ordinary names unaffected
+  assert.equal(pickName('benryanme', { allow: new Set(['benryanme']) }).name, 'benryanme');
+  assert.equal(pickName('BenRyan', { allow: new Set(['benryanme']) }).name, 'Driver 01');
 });

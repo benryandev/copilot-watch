@@ -20,9 +20,9 @@ export const WORLD_FRAME_MAX = 256; // bytes: a pose is ~50, a hi ~80
 
 // ---- names ----
 
-// Names nobody but the owner may wear on a tag in a Strike-branded world. Compared after the same folding isRude uses.
-export const RESERVED = ['ben', 'ben ryan', 'benryan', 'benryanme', 'shan', 'strike', 'strike finance', 'strikefinance', 'strike team',
-  'admin', 'mod', 'moderator', 'intern'];
+// Names nobody but the owner may wear. Ben's call (31 Oct 2026): only his own handle, so another Ben or Shan can be
+// themselves; "Ben Ryan" folds to the same letters. Compared after the same folding isRude uses.
+export const RESERVED = ['benryan', 'benryanme'];
 const LEET = { 0: 'o', 1: 'i', 3: 'e', 4: 'a', 5: 's', 7: 't', '@': 'a', $: 's', '!': 'i' };
 // Cyrillic and Greek letters that look like Latin ones (lower case, applied after toLowerCase), so "Вen" is still Ben
 const LOOKALIKE = { а: 'a', в: 'b', е: 'e', к: 'k', м: 'm', н: 'h', о: 'o', р: 'p', с: 'c', т: 't', у: 'y', х: 'x', і: 'i', ј: 'j', ѕ: 's', ԁ: 'd', ԛ: 'q', ԝ: 'w', ё: 'e',
