@@ -7,7 +7,7 @@
 //   race:seen:<hash>   one per IP, track, day and stage, so a visitor counts once per stage per day; expires after 2 days
 // Times are checked against the track (src/race-tracks.js): every checkpoint segment must take at least its length / RACE_MAX_SPEED.
 
-import { RACE_TRACKS, RACE_MAX_SPEED, RACE_MAX_MS } from './race-tracks.js';
+import { RACE_TRACKS, RACE_MAX_SPEED, RACE_MAX_MS, RACE_SEG_MAX_SPEED } from './race-tracks.js';
 import { safeEqual } from './telegram.js';
 import { newId } from './paper.js';
 
@@ -118,7 +118,7 @@ export function parseTime(body) {
   if (ms < minMs(t.length)) return { ok: false, error: 'lap_too_fast' };
   const at = [...splits, ms], dist = [...cps, t.length];
   for (let i = 0; i < at.length; i++)
-    if (at[i] - (i ? at[i - 1] : 0) < minMs(dist[i] - (i ? dist[i - 1] : 0))) return { ok: false, error: 'segment_too_fast', segment: i };
+    if (at[i] - (i ? at[i - 1] : 0) < ((dist[i] - (i ? dist[i - 1] : 0)) * 1000) / RACE_SEG_MAX_SPEED) return { ok: false, error: 'segment_too_fast', segment: i };
   const tr = parseTrace(body.trace, ms, t);
   if (!tr.ok) return tr;
   return { ok: true, entry: { track: body.track, name: n.name, key: n.name.toLowerCase(), ms, splits: [...splits], trace: tr.trace } };

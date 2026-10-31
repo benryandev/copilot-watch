@@ -6,5 +6,8 @@ export const RACE_TRACKS = {
 };
 /** Fastest believable speed in m/s (the car tops out at 24 m/s); any segment run faster than this is refused. */
 export const RACE_MAX_SPEED = 30;
+// Per segment. Checkpoint distances run along the centreline and a good line cuts the corners, so a short segment can
+// read well above the car's top speed (Ben's fastest real lap tripped 30 on the 50 m segment before the last checkpoint).
+export const RACE_SEG_MAX_SPEED = 36;
 /** Slowest lap kept: 30 minutes. */
 export const RACE_MAX_MS = 30 * 60 * 1000;

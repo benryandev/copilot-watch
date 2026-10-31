@@ -1,12 +1,13 @@
 import test from 'node:test'; import assert from 'node:assert/strict';
 import { handleRaceApi, parseTime, parseTrace, isRude, cleanName, RACE_ORIGINS, RACE_KEEP, RACE_SHOW, RACE_ADMIN_HEADER, RACE_TRACE_MAX, RACE_MAX_BODY, RACE_RATE_SEC } from '../src/race.js';
-import { RACE_TRACKS, RACE_MAX_SPEED, RACE_MAX_MS } from '../src/race-tracks.js';
+import { RACE_TRACKS, RACE_MAX_SPEED, RACE_SEG_MAX_SPEED, RACE_MAX_MS } from '../src/race-tracks.js';
 import handler from '../src/worker.js';
 import { memKV } from './kv-mem.js';
 
 // Every expected time below comes from the track constant, so swapping in the real track numbers needs no test changes.
 const TRACK = 'realfi-v1', T = RACE_TRACKS[TRACK], O = RACE_ORIGINS[0], NOW = Date.UTC(2026, 9, 30), ADMIN = 'test-admin-token-1234';
 const minMs = m => (m * 1000) / RACE_MAX_SPEED;
+const segMs = m => (m * 1000) / RACE_SEG_MAX_SPEED; // a single segment's floor (looser than the lap's)
 /** A clean lap at `speed` m/s (well under RACE_MAX_SPEED). */
 const lap = (speed = 20) => ({ splits: T.checkpoints.map(d => Math.round((d * 1000) / speed)), ms: Math.round((T.length * 1000) / speed) });
 const good = (over = {}) => ({ track: TRACK, name: 'Ben', ...lap(), ...over });
@@ -59,23 +60,23 @@ test('validation: track, name, splits, ms', () => {
 test('too-fast segment, too-fast final segment and too-fast lap', () => {
   const L = lap(), cps = T.checkpoints;
   // first segment just under its minimum; later ones shifted so the lap total is still fine
-  const fast0 = Math.ceil(minMs(cps[0])) - 1;
+  const fast0 = Math.ceil(segMs(cps[0])) - 1;
   const s0 = [fast0, ...L.splits.slice(1)];
   assert.deepEqual([parseTime(good({ splits: s0 })).error, parseTime(good({ splits: s0 })).segment], ['segment_too_fast', 0]);
   // a middle segment too fast
   if (cps.length > 1) {
-    const s = [...L.splits]; s[1] = s[0] + Math.ceil(minMs(cps[1] - cps[0])) - 1;
+    const s = [...L.splits]; s[1] = s[0] + Math.ceil(segMs(cps[1] - cps[0])) - 1;
     assert.equal(parseTime(good({ splits: s })).segment, 1);
   }
   // the final segment (last checkpoint to the line) too fast
-  const finalMin = minMs(T.length - cps.at(-1));
+  const finalMin = segMs(T.length - cps.at(-1));
   assert.equal(parseTime(good({ ms: L.splits.at(-1) + Math.ceil(finalMin) - 1 })).segment, cps.length);
   // exactly at the minimum is allowed
-  const exact = cps.map(d => Math.ceil(minMs(d)));
-  const seg = cps.map((d, i) => minMs(d - (i ? cps[i - 1] : 0)));
+  const exact = cps.map(d => Math.ceil(segMs(d)));
+  const seg = cps.map((d, i) => segMs(d - (i ? cps[i - 1] : 0)));
   if (exact.every((x, i) => x - (i ? exact[i - 1] : 0) >= seg[i])) assert.ok(parseTime(good({ splits: exact, ms: exact.at(-1) + Math.ceil(finalMin) + 1 })).ok);
   // whole lap below the minimum lap time
-  const lapMin = minMs(T.length);
+  const lapMin = segMs(T.length);
   const tiny = cps.map((_, i) => i + 1);
   assert.equal(parseTime(good({ splits: tiny, ms: Math.ceil(lapMin) - 1 })).error, 'lap_too_fast');
 });
@@ -286,3 +287,18 @@ test('ghost trace: bad traces are refused', () => {
   assert.ok(JSON.stringify(good({ trace: traceFor(L, Math.ceil(L.ms / (RACE_TRACE_MAX - 1))) })).length < RACE_MAX_BODY);
 });
 
+
+// A short segment between close checkpoints reads faster than the car's real top speed when the line cuts the corner
+// (the checkpoint distances run along the centreline), so segments get more headroom than the whole lap does.
+test('segments allow corner-cutting headroom; the whole lap still cannot beat the top speed', async () => {
+  const L = lap(24);
+  const quick = [...L.splits]; // checkpoint 5 (550 m) reached early: the 50 m segment before it at ~34 m/s
+  quick[4] = quick[3] + Math.round((50 * 1000) / 34);
+  const r = await post(env(), good({ splits: quick, ms: L.ms }));
+  assert.equal(r.status, 200, 'a 50 m segment at 34 m/s is a racing line, not a cheat');
+  const tooQuick = [...L.splits];
+  tooQuick[4] = tooQuick[3] + Math.round((50 * 1000) / (RACE_SEG_MAX_SPEED + 1));
+  assert.equal(await err(await post(env(), good({ splits: tooQuick, ms: L.ms }))), 'segment_too_fast');
+  assert.equal(await err(await post(env(), good(lap(RACE_MAX_SPEED + 0.5)))), 'lap_too_fast');
+  assert.ok(RACE_SEG_MAX_SPEED > RACE_MAX_SPEED);
+});
