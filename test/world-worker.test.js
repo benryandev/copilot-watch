@@ -104,5 +104,7 @@ test('World /restart aborts the object so the next request runs the newly deploy
   await w.ready;
   const r = await w.fetch(new Request('https://w/restart', { method: 'POST' }));
   assert.equal(r.status, 200);
+  assert.equal(ctx.aborted, null, 'the reply goes out first');
+  await new Promise(res => setTimeout(res, 120));
   assert.equal(ctx.aborted, 'restart');
 });
