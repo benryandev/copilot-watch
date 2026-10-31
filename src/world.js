@@ -49,3 +49,141 @@ export function parsePose(m) {
   let h = m.h % TAU; if (h > Math.PI) h -= TAU; else if (h <= -Math.PI) h += TAU;
   return { ok: true, x: r1(m.x), z: r1(m.z), h: r2(h), s: Math.min(WORLD_MAX_SPEED, r1(m.s)), j: m.j === 1 || m.j === true };
 }
+
+// ---- the room ----
+
+export const WORLD_MAX = 200; // sockets in the room
+export const WORLD_IP_MAX = 4; // sockets per client address
+export const WORLD_POSE_MAX_HZ = 20; // poses per second per socket; faster ones are dropped
+export const WORLD_SNAPSHOT_MS = 100; // at most one snapshot per 100 ms
+export const WORLD_RENAME_SEC = 10;
+export const WORLD_BAD_MAX = 3; // bad frames in a row before the socket is closed
+export const WORLD_JUMP_MS = 1000; // one teleport flag per second
+// District colours from the map (content.js), minus the player's own hub green, so your car is always the green one.
+export const COLOURS = ['#22d3ee', '#facc15', '#ec4899', '#3b82f6', '#f97316', '#a78bfa', '#0fb89c', '#94a3b8'];
+
+const msg = (to, m) => [to, m];
+
+export class Room {
+  /** @param {{ownerToken?: string, blocks?: Record<string, number>}} o blocks: kick blocks keyed s:<id> / i:<ipKey> → until ms */
+  constructor({ ownerToken = null, blocks = {} } = {}) {
+    this.ownerToken = ownerToken;
+    this.blocks = { ...blocks };
+    this.players = new Map(); // id → player
+    this.colourN = 0;
+    this.driverN = 0;
+    this.lastSnap = -Infinity;
+    this.dirty = new Set();
+  }
+
+  joined() { return [...this.players.values()].filter(p => p.joined); }
+  online() { return this.joined().length; }
+  taken() { return new Set(this.joined().map(p => p.name.toLowerCase())); }
+  nextDriver() { this.driverN = (this.driverN % 99) + 1; return String(this.driverN).padStart(2, '0'); }
+  blocked(key, now) { const until = this.blocks[key]; if (!until) return false; if (until <= now) { delete this.blocks[key]; return false; } return true; }
+
+  /** A socket arrives, before its hi. */
+  open(id, { ipKey }, now) {
+    if (this.blocked('s:' + id, now) || this.blocked('i:' + ipKey, now)) return { ok: false, error: 'blocked' };
+    if ([...this.players.values()].filter(p => p.ipKey === ipKey).length >= WORLD_IP_MAX) return { ok: false, error: 'ip' };
+    if (this.players.size >= WORLD_MAX) return { ok: false, error: 'full' };
+    this.players.set(id, { id, ipKey, since: now, joined: false, name: null, colour: null, pose: null, times: [], lastJump: -Infinity, bad: 0, renamedAt: -Infinity });
+    return { ok: true };
+  }
+
+  /** What the shell stores on the socket so the roster survives hibernation. */
+  attachment(id) {
+    const p = this.players.get(id);
+    return p?.joined ? { id: p.id, name: p.name, colour: p.colour, ipKey: p.ipKey, since: p.since } : null;
+  }
+
+  /** Rebuild joined players from stored attachments after a wake-up. */
+  restore(entries) {
+    for (const e of entries) {
+      if (!e?.id) continue;
+      this.players.set(e.id, { id: e.id, ipKey: e.ipKey, since: e.since, joined: true, name: e.name, colour: e.colour, pose: null, times: [], lastJump: -Infinity, bad: 0, renamedAt: -Infinity });
+      this.colourN++;
+    }
+  }
+
+  broadcast(m, except = null) { return this.joined().filter(p => p.id !== except).map(p => msg(p.id, m)); }
+
+  peerView(p) { return { id: p.id, name: p.name, colour: p.colour, ...(p.pose ? { x: p.pose.x, z: p.pose.z, h: p.pose.h, s: p.pose.s } : {}) }; }
+
+  /** One frame from a socket. Returns the messages to send, whether to close, and when to flush a held snapshot. */
+  onMessage(id, raw, now) {
+    const p = this.players.get(id);
+    if (!p) return { out: [] };
+    const bad = () => (++p.bad >= WORLD_BAD_MAX ? { out: [], close: 'bad' } : { out: [] });
+    if (typeof raw !== 'string' || raw.length > WORLD_FRAME_MAX) return bad();
+    let m;
+    try { m = JSON.parse(raw); } catch { return bad(); }
+    if (!m || typeof m !== 'object' || Array.isArray(m)) return bad();
+    if (m.t === 'hi' && !p.joined) {
+      const owner = !!this.ownerToken && typeof m.owner === 'string' && m.owner === this.ownerToken;
+      p.name = pickName(m.name, { owner, taken: this.taken(), next: () => this.nextDriver() }).name;
+      p.colour = COLOURS[this.colourN++ % COLOURS.length];
+      p.joined = true; p.bad = 0;
+      const peers = this.joined().filter(o => o !== p).map(o => this.peerView(o));
+      return { out: [msg(id, { t: 'ok', id, name: p.name, colour: p.colour, now, peers }),
+        ...this.broadcast({ t: 'join', id, name: p.name, colour: p.colour }, id), ...this.broadcast({ t: 'n', online: this.online() }, id)] };
+    }
+    if (m.t === 'ping') { p.bad = 0; return { out: [msg(id, { t: 'pong', now, echo: m.echo })] }; }
+    if (!p.joined) return bad();
+    if (m.t === 'p') {
+      const pose = parsePose(m);
+      if (!pose.ok) return bad();
+      p.bad = 0;
+      p.times = p.times.filter(t => now - t < 1000);
+      if (p.times.length >= WORLD_POSE_MAX_HZ) return { out: [] }; // flood: dropped, not fatal
+      p.times.push(now);
+      if (pose.j) { if (now - p.lastJump < WORLD_JUMP_MS) pose.j = false; else p.lastJump = now; }
+      p.pose = pose;
+      this.dirty.add(id);
+      const wait = WORLD_SNAPSHOT_MS - (now - this.lastSnap);
+      return wait <= 0 ? this.flush(now) : { out: [], flushIn: wait };
+    }
+    if (m.t === 'name') {
+      p.bad = 0;
+      if (now - p.renamedAt < WORLD_RENAME_SEC * 1000) return { out: [msg(id, { t: 'err', error: 'rate' })] };
+      p.renamedAt = now;
+      const taken = this.taken(); taken.delete(p.name.toLowerCase());
+      p.name = pickName(m.name, { owner: false, taken, next: () => this.nextDriver() }).name;
+      return { out: [msg(id, { t: 'named', name: p.name }), ...this.broadcast({ t: 'rename', id, name: p.name }, id)] };
+    }
+    return bad();
+  }
+
+  /** Send the held snapshot (movers since the last one) to everyone. */
+  flush(now) {
+    if (!this.dirty.size) return { out: [] };
+    const p = [...this.dirty].map(id => this.players.get(id)).filter(q => q?.pose).map(q => [q.id, q.pose.x, q.pose.z, q.pose.h, q.pose.s, q.pose.j ? 1 : 0]);
+    this.dirty.clear();
+    this.lastSnap = now;
+    return { out: this.broadcast({ t: 's', now, p }) };
+  }
+
+  /** A socket went away. */
+  close(id) {
+    const p = this.players.get(id);
+    if (!p) return { out: [] };
+    this.players.delete(id);
+    this.dirty.delete(id);
+    if (!p.joined) return { out: [] };
+    return { out: [...this.broadcast({ t: 'leave', id }), ...this.broadcast({ t: 'n', online: this.online() })] };
+  }
+
+  /** For the admin: who's here (no addresses). */
+  who() { return this.joined().map(p => ({ id: p.id, name: p.name, colour: p.colour, x: p.pose?.x ?? null, z: p.pose?.z ?? null, since: p.since })); }
+
+  /** Block matching players (by id, or by name ignoring case and a " (2)" suffix) for `minutes` and drop them. The shell closes the sockets. */
+  kick({ id, name } = {}, minutes, now) {
+    const base = n => n.trim().toLowerCase().replace(/ \(\d+\)$/, '');
+    const key = typeof name === 'string' ? base(name) : null;
+    const hits = this.joined().filter(p => (id && p.id === id) || (key && base(p.name) === key));
+    const until = now + Math.max(1, Number(minutes) || 60) * 60_000;
+    const out = [];
+    for (const p of hits) { this.blocks['s:' + p.id] = until; this.blocks['i:' + p.ipKey] = until; out.push(...this.close(p.id).out); }
+    return { closed: hits.map(p => p.id), blocks: { ...this.blocks }, out };
+  }
+}
