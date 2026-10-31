@@ -39,10 +39,12 @@ export function isReserved(name) { return RESERVED_FOLDED.has(fold(name)); }
  * becomes "Driver NN". A name already worn in the room gets " (2)", " (3)". `taken` holds lower-cased names in use;
  * `next()` returns the next two-digit string for the fallback.
  */
-export function pickName(raw, { owner = false, taken = new Set(), next = () => '01', keep = null } = {}) {
+export function pickName(raw, { owner = false, allow = null, taken = new Set(), next = () => '01', keep = null } = {}) {
   const c = cleanName(raw);
   let name, fallback = false, reason;
-  if (c.ok && (owner || !isReserved(c.name))) name = c.name;
+  // The owner may wear any reserved name; a guest token (allow) only the folded names it was issued for
+  const permitted = n => owner || !isReserved(n) || (allow instanceof Set && allow.has(fold(n)));
+  if (c.ok && permitted(c.name)) name = c.name;
   else {
     fallback = true;
     reason = !c.ok ? (c.error === 'rude_name' ? 'rude' : 'bad') : 'reserved';
@@ -90,14 +92,24 @@ const msg = (to, m) => [to, m];
 
 export class Room {
   /** @param {{ownerToken?: string, blocks?: Record<string, number>}} o blocks: kick blocks keyed s:<id> / i:<ipKey> → until ms */
-  constructor({ ownerToken = null, blocks = {} } = {}) {
+  /** guests: { token: [names] } lets a named person (Shan, say) wear their own reserved name and nothing else */
+  constructor({ ownerToken = null, guests = {}, blocks = {} } = {}) {
     this.ownerToken = ownerToken;
+    this.guests = new Map(Object.entries(guests || {}).filter(([t, names]) => t && Array.isArray(names)).map(([t, names]) => [t, new Set(names.map(fold))]));
     this.blocks = { ...blocks };
     this.players = new Map(); // id → player
     this.colourN = 0;
     this.driverN = 0;
     this.lastSnap = -Infinity;
     this.dirty = new Set();
+  }
+
+  /** What a presented token permits: {owner} for Ben's, {allow} for a guest's, nothing otherwise. */
+  grant(token) {
+    if (!(typeof token === 'string' && token)) return {};
+    if (this.ownerToken && token === this.ownerToken) return { owner: true };
+    const allow = this.guests.get(token);
+    return allow ? { allow } : {};
   }
 
   joined() { return [...this.players.values()].filter(p => p.joined); }
@@ -155,8 +167,7 @@ export class Room {
     try { m = JSON.parse(raw); } catch { return bad(); }
     if (!m || typeof m !== 'object' || Array.isArray(m)) return bad();
     if (m.t === 'hi' && !p.joined) {
-      const owner = !!this.ownerToken && typeof m.owner === 'string' && m.owner === this.ownerToken;
-      p.name = pickName(m.name, { owner, taken: this.taken(), next: () => this.nextDriver() }).name;
+      p.name = pickName(m.name, { ...this.grant(m.owner), taken: this.taken(), next: () => this.nextDriver() }).name;
       p.colour = COLOURS[this.colourN++ % COLOURS.length];
       p.joined = true; p.bad = 0;
       const peers = this.joined().filter(o => o !== p).map(o => this.peerView(o));
@@ -181,8 +192,7 @@ export class Room {
       if (now - p.renamedAt < WORLD_RENAME_SEC * 1000) return { out: [msg(id, { t: 'err', error: 'rate' })] };
       p.renamedAt = now;
       const taken = this.taken(); taken.delete(p.name.toLowerCase());
-      const owner = !!this.ownerToken && typeof m.owner === 'string' && m.owner === this.ownerToken;
-      const pick = pickName(m.name, { owner, taken, next: () => this.nextDriver(), keep: p.name });
+      const pick = pickName(m.name, { ...this.grant(m.owner), taken, next: () => this.nextDriver(), keep: p.name });
       p.name = pick.name;
       const asked = typeof m.name === 'string' ? m.name.slice(0, 40) : '';
       const named = pick.reason ? { t: 'named', name: p.name, reason: pick.reason, asked } : { t: 'named', name: p.name };

@@ -264,3 +264,14 @@ test('room: a rejected rename keeps the Driver number you already wear and says 
   assert.deepEqual(fourth, { t: 'named', name: 'Nova' });
   assert.equal(pickName('Ben').reason, 'reserved'); assert.equal(pickName('').reason, 'bad'); assert.equal(pickName('Nova').reason, undefined);
 });
+
+test('room: a guest token unlocks only the reserved names it was issued for, on hi and on rename', () => {
+  const r = new Room({ ownerToken: 'own', guests: { 'shan-token': ['Shan'] } });
+  assert.equal(to(hi(r, 'a', 'Shan', 0, { owner: 'shan-token' }).out, 'a')[0].name, 'Shan');
+  assert.equal(to(hi(r, 'b', 'Ben', 0, { owner: 'shan-token' }).out, 'b')[0].name, 'Driver 01'); // not his to take
+  assert.equal(to(hi(r, 'c', 'Shan', 0, { owner: 'nope' }).out, 'c')[0].name, 'Driver 02');
+  assert.equal(to(r.onMessage('b', JSON.stringify({ t: 'name', name: 'Shan', owner: 'shan-token' }), 1000).out, 'b')[0].name, 'Shan (2)');
+  assert.equal(to(hi(r, 'd', 'Nova', 0, { owner: 'shan-token' }).out, 'd')[0].name, 'Nova'); // ordinary names unaffected
+  assert.equal(pickName('Shan', { allow: new Set(['shan']) }).name, 'Shan');
+  assert.equal(pickName('Ben', { allow: new Set(['shan']) }).name, 'Driver 01');
+});

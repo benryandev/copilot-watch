@@ -56,7 +56,9 @@ export class World {
     this.paused = offChecker(() => env.KV.get(WORLD_OFF_KEY)); // one KV read per 30 s, not one per pose
     this.ready = ctx.blockConcurrencyWhile(async () => {
       const blocks = (await ctx.storage.get('blocks')) || {};
-      this.room = new Room({ ownerToken: env.WORLD_OWNER_TOKEN || null, blocks });
+      let guests = {};
+      try { guests = env.WORLD_GUEST_TOKENS ? JSON.parse(env.WORLD_GUEST_TOKENS) : {}; } catch { console.warn('WORLD_GUEST_TOKENS is not JSON'); }
+      this.room = new Room({ ownerToken: env.WORLD_OWNER_TOKEN || null, guests, blocks });
       const joined = [], now = Date.now();
       for (const ws of ctx.getWebSockets()) {
         const a = ws.deserializeAttachment();
