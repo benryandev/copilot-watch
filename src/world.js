@@ -2,6 +2,7 @@
 // Pure logic, no Cloudflare types; the Durable Object shell in world-worker.js wires it to websockets.
 import { cleanName } from './race.js';
 
+export const WORLD_OFF_KEY = 'world:off'; // any value under this KV key pauses new connections and closes live ones
 export const WORLD_RADIUS = 400; // m from the world centre: anything further is not a place a car can be
 export const WORLD_MAX_SPEED = 40; // m/s, above the car's top speed with a margin for a jump landing
 export const WORLD_FRAME_MAX = 256; // bytes: a pose is ~50, a hi ~80

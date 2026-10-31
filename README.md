@@ -149,3 +149,19 @@ Built by [Ben Ryan](https://benryan.com.au).
 - Discord public key: `50e537c588ad61fa8b38b6ced330efecd368c0c74f351ea710808beba8d6cb48` (verifies interaction signatures)
 - Discord test server ("Copilot") guild ID: `1561721893071880303` (slash commands are registered globally; the guild ID is only for testing with `--guild`)
 - Cloudflare: Workers Paid account; KV namespace `copilot-watch` (`22fd6ef1fa074edea7689bdaa2b5378f`); Worker at `copilot-watch.benryan.workers.dev`.
+
+## copilot-world (multiplayer room)
+
+A second worker in this repo, `copilot-world` (`wrangler.world.toml`, entry `src/world-worker.js`, logic in `src/world.js`), holds the live room for the ecosystem map's multiplayer: who is driving, where, under what name. It is deployed separately (`pnpm run deploy:world`) so that nothing here can take the alerts down. One Durable Object named `main`, hibernating websockets, nothing stored but kick blocks and the socket attachments that rebuild the roster after a wake-up.
+
+| Route | What |
+|---|---|
+| `GET /ws` (websocket) | The room. Same origins as the race API; refused with 503 `off` while the KV key `world:off` exists. Frames are small JSON: client `hi {name, owner?}`, `p {x, z, h, s, j?}` (10 Hz moving, 1 Hz still), `name {name}`, `ping {echo}`; server `ok {id, name, colour, now, peers}`, `s {now, p: [[id, x, z, h, s, j], …]}` at most every 100 ms, `join`, `leave`, `rename`, `n {online}`, `named`, `pong`, `err {error}`. Poses outside the world, over 256 bytes or faster than 20 a second are dropped; three bad frames in a row close the socket; 4 sockets per address; 200 in the room. |
+| `GET /presence` | `{online}`, public, CORS for the race origins. |
+| `GET /who` | Admin (`x-race-admin`): `{online, who: [{id, name, colour, x, z, since}]}`. Never addresses. |
+| `POST /kick` | Admin: `{id?, name?, minutes = 60}` closes matching sockets and blocks that session and address hash for the period. |
+
+Names go through the leaderboard's `cleanName`/`isRude`, then a reserved list (Ben, Shan, Strike, staff-sounding words): anything refused becomes `Driver NN`; two live players asking for the same name get `Name` and `Name (2)`. The owner token (`WORLD_OWNER_TOKEN` secret, sent as `owner` in `hi`) is the only way to wear a reserved name. Secrets: `pnpm dlx wrangler@4 secret put RACE_ADMIN_TOKEN -c wrangler.world.toml` and the same for `WORLD_OWNER_TOKEN`.
+
+Local: `pnpm run dev:world` (port 8787, test tokens) and `node qa/world-smoke.mjs` in another shell. Kill switch: `pnpm dlx wrangler@4 kv key put world:off 1 --namespace-id 22fd6ef1fa074edea7689bdaa2b5378f --remote` (delete the key to resume).
+

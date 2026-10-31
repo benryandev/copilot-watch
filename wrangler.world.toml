@@ -1,0 +1,20 @@
+# copilot-world: the multiplayer room for the Strike ecosystem map. Deployed apart from copilot-watch on purpose:
+# a bad deploy or Durable Object migration here can never take the trading alerts down. Deploy: pnpm run deploy:world
+name = "copilot-world"
+main = "src/world-worker.js"
+compatibility_date = "2026-10-01"
+workers_dev = true
+preview_urls = false
+
+# The same KV namespace as copilot-watch, for the kill switch key world:off
+[[kv_namespaces]]
+binding = "KV"
+id = "22fd6ef1fa074edea7689bdaa2b5378f"
+
+[[durable_objects.bindings]]
+name = "WORLD"
+class_name = "World"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["World"]
