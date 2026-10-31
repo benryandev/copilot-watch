@@ -92,10 +92,11 @@ test('names: cleaned, invisible characters stripped, Scunthorpe-style names pass
 });
 
 test(`rate limit: one post per IP per ${RACE_RATE_SEC} s, counted even when invalid; another IP is fine`, async () => {
+  assert.equal(RACE_RATE_SEC, 10); // two laps can finish 25 s apart; 30 s swallowed a best lap (1 Nov 2026)
   const e = env(); const ip = '9.9.9.9';
   assert.equal((await post(e, good({ name: 'x'.repeat(30) }), { ip })).status, 400); // invalid, still counts
-  const r = await post(e, good(), { ip, now: NOW + 20_000 });
-  assert.equal(r.status, 429); assert.equal(r.headers.get('retry-after'), String(RACE_RATE_SEC - 20)); assert.equal(await err(r), 'rate');
+  const r = await post(e, good(), { ip, now: NOW + 4_000 });
+  assert.equal(r.status, 429); assert.equal(r.headers.get('retry-after'), String(RACE_RATE_SEC - 4)); assert.equal(await err(r), 'rate');
   assert.equal((await post(e, good(), { ip: '8.8.8.8' })).status, 200);
   // the window has passed but the key (60 s, KV's minimum TTL) is still there: allowed on the timestamp
   assert.equal((await post(e, good({ name: 'Other' }), { ip, now: NOW + RACE_RATE_SEC * 1000 + 1000 })).status, 200);

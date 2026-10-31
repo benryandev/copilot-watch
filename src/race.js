@@ -12,7 +12,7 @@ import { safeEqual } from './telegram.js';
 import { newId } from './paper.js';
 
 export const RACE_ORIGINS = ['https://strike.benryan.com.au', 'http://localhost:8766'];
-export const RACE_KEEP = 100, RACE_SHOW = 10, RACE_RATE_SEC = 30, RACE_MAX_BODY = 16384, RACE_NAME_MAX = 20;
+export const RACE_KEEP = 100, RACE_SHOW = 10, RACE_RATE_SEC = 10, RACE_MAX_BODY = 16384, RACE_NAME_MAX = 20;
 /** Ghost trace: at least 2 and at most 400 samples (40 s at ten a second; the page thins longer laps). */
 export const RACE_TRACE_MIN = 2, RACE_TRACE_MAX = 400;
 /** A trace must cover at least this share of the lap length (an inside line is shorter than the centreline, a fake is far shorter). */
