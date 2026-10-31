@@ -1,7 +1,7 @@
 // copilot-world: the multiplayer room for the Strike ecosystem map (strike.benryan.com.au/ecosystem).
 // Its own worker, apart from copilot-watch, so a bad deploy or a Durable Object migration here can never touch the
 // trading alerts. One Durable Object ("main") holds everyone connected; src/world.js is the logic, this file the plumbing.
-import { Room, WORLD_OFF_KEY } from './world.js';
+import { Room, WORLD_OFF_KEY, offChecker } from './world.js';
 import { RACE_ORIGINS, RACE_ADMIN_HEADER } from './race.js';
 import { safeEqual } from './telegram.js';
 
@@ -53,6 +53,7 @@ export class World {
     this.env = env;
     this.sockets = new Map(); // id → WebSocket
     this.flushTimer = null;
+    this.paused = offChecker(() => env.KV.get(WORLD_OFF_KEY)); // one KV read per 30 s, not one per pose
     this.ready = ctx.blockConcurrencyWhile(async () => {
       const blocks = (await ctx.storage.get('blocks')) || {};
       this.room = new Room({ ownerToken: env.WORLD_OWNER_TOKEN || null, blocks });
@@ -116,13 +117,19 @@ export class World {
     await this.ready;
     const id = this.idOf(ws);
     if (!id) return ws.close(1008, 'unknown');
-    if ((await this.env.KV.get(WORLD_OFF_KEY)) != null) { this.deliver(this.room.close(id).out); this.sockets.delete(id); return ws.close(1001, 'paused'); }
+    if (await this.paused(Date.now())) return this.pauseAll();
     const res = this.room.onMessage(id, typeof message === 'string' ? message : '', Date.now());
     this.deliver(res.out);
     const a = this.room.attachment(id);
     if (a && !ws.deserializeAttachment()?.name) ws.serializeAttachment(a);
     if (res.flushIn) this.flushLater(res.flushIn);
     if (res.close) { this.deliver(this.room.close(id).out); this.sockets.delete(id); ws.close(1008, res.close); }
+  }
+
+  /** The kill switch is on: close every socket; the worker refuses new ones until the key is gone. */
+  pauseAll() {
+    for (const [id, ws] of this.sockets) { this.room.close(id); try { ws.close(1001, 'paused'); } catch { /* gone */ } }
+    this.sockets.clear();
   }
 
   async webSocketClose(ws) { await this.ready; const id = this.idOf(ws); if (id) { this.deliver(this.room.close(id).out); this.sockets.delete(id); } }

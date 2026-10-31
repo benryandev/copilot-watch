@@ -1,5 +1,5 @@
 import test from 'node:test'; import assert from 'node:assert/strict';
-import { pickName, isReserved, RESERVED, parsePose, WORLD_RADIUS, WORLD_MAX_SPEED, WORLD_FRAME_MAX, Room, WORLD_MAX, WORLD_IP_MAX, COLOURS } from '../src/world.js';
+import { pickName, isReserved, RESERVED, parsePose, WORLD_RADIUS, WORLD_MAX_SPEED, WORLD_FRAME_MAX, Room, WORLD_MAX, WORLD_IP_MAX, COLOURS, offChecker } from '../src/world.js';
 
 test('pickName: clean names pass, reserved and rude fall back, owner may be Ben', () => {
   assert.deepEqual(pickName('Aveli'), { name: 'Aveli', fallback: false });
@@ -181,4 +181,14 @@ test('room: who() never includes ipKey', () => {
   const w = r.who()[0];
   assert.deepEqual(Object.keys(w).sort(), ['colour', 'id', 'name', 'since', 'x', 'z']);
   assert.equal(w.x, 1);
+});
+
+test('offChecker: reads the switch at most once per ttl and remembers the answer', async () => {
+  let reads = 0, value = null;
+  const paused = offChecker(async () => { reads++; return value; }, 30_000);
+  assert.equal(await paused(0), false); assert.equal(await paused(10_000), false); assert.equal(reads, 1);
+  value = '1';
+  assert.equal(await paused(29_999), false); assert.equal(await paused(30_000), true); assert.equal(reads, 2);
+  value = null;
+  assert.equal(await paused(59_000), true); assert.equal(await paused(61_000), false); assert.equal(reads, 3);
 });
