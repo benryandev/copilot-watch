@@ -1,5 +1,5 @@
 import test from 'node:test'; import assert from 'node:assert/strict';
-import { handleRaceApi, parseTime, parseTrace, isRude, cleanName, RACE_ORIGINS, RACE_KEEP, RACE_SHOW, RACE_ADMIN_HEADER, RACE_TRACE_MAX, RACE_MAX_BODY } from '../src/race.js';
+import { handleRaceApi, parseTime, parseTrace, isRude, cleanName, RACE_ORIGINS, RACE_KEEP, RACE_SHOW, RACE_ADMIN_HEADER, RACE_TRACE_MAX, RACE_MAX_BODY, RACE_RATE_SEC } from '../src/race.js';
 import { RACE_TRACKS, RACE_MAX_SPEED, RACE_MAX_MS } from '../src/race-tracks.js';
 import handler from '../src/worker.js';
 import { memKV } from './kv-mem.js';
@@ -90,14 +90,17 @@ test('names: cleaned, invisible characters stripped, Scunthorpe-style names pass
     assert.equal(isRude(bad), true, bad);
 });
 
-test('rate limit: one post per IP per 60 s, counted even when invalid; another IP is fine', async () => {
+test(`rate limit: one post per IP per ${RACE_RATE_SEC} s, counted even when invalid; another IP is fine`, async () => {
   const e = env(); const ip = '9.9.9.9';
   assert.equal((await post(e, good({ name: 'x'.repeat(30) }), { ip })).status, 400); // invalid, still counts
   const r = await post(e, good(), { ip, now: NOW + 20_000 });
-  assert.equal(r.status, 429); assert.equal(r.headers.get('retry-after'), '40'); assert.equal(await err(r), 'rate');
+  assert.equal(r.status, 429); assert.equal(r.headers.get('retry-after'), String(RACE_RATE_SEC - 20)); assert.equal(await err(r), 'rate');
   assert.equal((await post(e, good(), { ip: '8.8.8.8' })).status, 200);
-  e.KV.now = 61_000; // memKV clock: the 60 s key has expired
-  assert.equal((await post(e, good({ name: 'Other' }), { ip, now: NOW + 61_000 })).status, 200);
+  // the window has passed but the key (60 s, KV's minimum TTL) is still there: allowed on the timestamp
+  assert.equal((await post(e, good({ name: 'Other' }), { ip, now: NOW + RACE_RATE_SEC * 1000 + 1000 })).status, 200);
+  assert.equal((await post(e, good({ name: 'Again' }), { ip, now: NOW + RACE_RATE_SEC * 1000 + 2000 })).status, 429);
+  e.KV.now = 61_000; // memKV clock: the key has expired
+  assert.equal((await post(e, good({ name: 'Third' }), { ip, now: NOW + 61_000 })).status, 200);
   // unparseable JSON and oversized bodies are refused before the limit and don't count
   const e2 = env();
   assert.equal((await post(e2, '{nope', { ip })).status, 400);

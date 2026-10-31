@@ -2,7 +2,7 @@
 //   race:top:<track>   [{id, name, key, ms, splits, trace, at}] sorted by ms, then earlier at; at most 100, one per name (key = lower case)
 //                      trace: the lap's path for the ghost car, [[t ms, x, z, heading], ...] ten times a second, or null for laps
 //                      posted before ghosts existed (the page then rebuilds a ghost from the checkpoint times)
-//   race:ip:<hash>     attempt time; expires after 60 s (one post per IP per minute). The IP is hashed, never stored.
+//   race:ip:<hash>     attempt time (one post per IP every 30 s; the key lives 60 s, KV's minimum TTL). The IP is hashed, never stored.
 //   race:stats:<track>:<YYYY-MM-DD>  {open, found, start, finish, post}: visitors per UTC day who reached each stage
 //   race:seen:<hash>   one per IP, track, day and stage, so a visitor counts once per stage per day; expires after 2 days
 // Times are checked against the track (src/race-tracks.js): every checkpoint segment must take at least its length / RACE_MAX_SPEED.
@@ -12,7 +12,7 @@ import { safeEqual } from './telegram.js';
 import { newId } from './paper.js';
 
 export const RACE_ORIGINS = ['https://strike.benryan.com.au', 'http://localhost:8766'];
-export const RACE_KEEP = 100, RACE_SHOW = 10, RACE_RATE_SEC = 60, RACE_MAX_BODY = 16384, RACE_NAME_MAX = 20;
+export const RACE_KEEP = 100, RACE_SHOW = 10, RACE_RATE_SEC = 30, RACE_MAX_BODY = 16384, RACE_NAME_MAX = 20;
 /** Ghost trace: at least 2 and at most 400 samples (40 s at ten a second; the page thins longer laps). */
 export const RACE_TRACE_MIN = 2, RACE_TRACE_MAX = 400;
 /** A trace must cover at least this share of the lap length (an inside line is shorter than the centreline, a fake is far shorter). */
@@ -232,11 +232,11 @@ export async function handleRaceApi(req, env, { now = Date.now() } = {}) {
     const ip = req.headers.get('cf-connecting-ip') || '?';
     const k = await ipKey(ip);
     const prev = Number(await kv.get(k));
-    if (prev) {
+    if (prev && now - prev < RACE_RATE_SEC * 1000) {
       const wait = Math.max(1, Math.ceil((prev + RACE_RATE_SEC * 1000 - now) / 1000));
       return json({ error: 'rate', retryAfter: Math.min(wait, RACE_RATE_SEC) }, 429, origin, { 'retry-after': String(Math.min(wait, RACE_RATE_SEC)) });
     }
-    await kv.put(k, String(now), { expirationTtl: RACE_RATE_SEC });
+    await kv.put(k, String(now), { expirationTtl: Math.max(60, RACE_RATE_SEC) }); // KV won't take a TTL under 60 s; the window is checked above
     const p = parseTime(r.body);
     if (!p.ok) return json({ error: p.error, ...(p.segment != null ? { segment: p.segment } : {}) }, 400, origin);
     const { rank, best, rows } = await addTime(kv, p.entry, now);
