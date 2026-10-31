@@ -50,7 +50,7 @@ test('room: hi joins, replies ok with peers, tells the others, counts', () => {
   assert.equal(ok.peers.length, 1); assert.equal(ok.peers[0].name, 'Driver 01'); assert.equal(ok.peers[0].id, 'a');
   assert.deepEqual(to(out, 'a').map(m => m.t), ['join', 'n']);
   assert.equal(to(out, 'a')[1].online, 2); assert.equal(r.online(), 2);
-  assert.deepEqual(r.attachment('b'), { id: 'b', name: 'Aveli', colour: ok.colour, ipKey: 'kb', since: 10 });
+  assert.deepEqual(r.attachment('b'), { id: 'b', name: 'Aveli', colour: ok.colour, ipKey: 'kb', since: 10, heardAt: 10 });
 });
 
 test('room: owner token lets Ben be Ben; colours differ for the first eight', () => {
@@ -241,4 +241,13 @@ test('room: reap drops sockets silent for over a minute, joined or not, and tell
   assert.deepEqual(r.reap(90_000).closed, []); // b spoke at 30 s
   assert.deepEqual(r.reap(90_001).closed, ['b']);
   assert.equal(WORLD_IDLE_MS, 60_000);
+});
+
+test('room: restore keeps when each socket was last heard (from the attachment), so a wake-up cannot refresh a dead one', () => {
+  const r = room(); hi(r, 'a', 'A', 0); pose(r, 'a', 40_000);
+  assert.equal(r.attachment('a').heardAt, 40_000);
+  const r2 = room();
+  r2.restore([r.attachment('a'), { id: 'z', name: 'Zombie', colour: '#fff', ipKey: 'kz', since: 0 }], 100_000);
+  assert.deepEqual(r2.reap(99_000).closed, ['z']); // never heard since it joined at 0
+  assert.deepEqual(r2.reap(100_001).closed, ['a']); // a was last heard at 40 s: over a minute ago now
 });

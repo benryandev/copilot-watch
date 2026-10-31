@@ -62,7 +62,8 @@ export class World {
         const a = ws.deserializeAttachment();
         if (!a?.id) continue;
         this.sockets.set(a.id, ws);
-        if (a.name) joined.push(a); else this.room.open(a.id, { ipKey: a.ipKey }, now);
+        if (a.name) joined.push(a);
+        else if (this.room.open(a.id, { ipKey: a.ipKey }, now).ok) this.room.players.get(a.id).lastMsg = a.since ?? now; // never said hi: ages from when it arrived
       }
       this.room.restore(joined, now);
       if (this.sockets.size) await this.armReaper();
@@ -138,8 +139,9 @@ export class World {
     if (await this.paused(Date.now())) return this.pauseAll();
     const res = this.room.onMessage(id, typeof message === 'string' ? message : '', Date.now());
     this.deliver(res.out);
-    const a = this.room.attachment(id);
-    if (a && ws.deserializeAttachment()?.name !== a.name) ws.serializeAttachment(a); // first hi, and every rename
+    const a = this.room.attachment(id), cur = ws.deserializeAttachment();
+    // Stored on first hi, on every rename, and every 30 s of messages (so the last-heard time survives hibernation)
+    if (a && (cur?.name !== a.name || a.heardAt - (cur?.heardAt ?? 0) > 30_000)) ws.serializeAttachment(a);
     if (res.flushIn) this.flushLater(res.flushIn);
     if (res.close) { this.deliver(this.room.close(id).out); this.sockets.delete(id); ws.close(1008, res.close); }
   }

@@ -65,16 +65,33 @@ test('World re-serialises the socket attachment when a player renames, so a wake
 });
 
 test('World arms a reaper alarm when sockets exist, and alarm() closes the silent ones', async () => {
-  const ws = fakeWs({ id: 'z', name: 'Zombie', colour: '#fff', ipKey: 'k', since: 0 });
-  const ctx = fakeCtx([ws]);
+  const ws = fakeWs({ id: 'z', name: 'Zombie', colour: '#fff', ipKey: 'k', since: Date.now() - 120_000 }); // joined two minutes ago, never heard
+  const live = fakeWs({ id: 'l', name: 'Live', colour: '#fff', ipKey: 'k2', since: Date.now() - 120_000, heardAt: Date.now() - 5_000 });
+  const ctx = fakeCtx([ws, live]);
   const w = new World(ctx, { KV: memKV(), RACE_ADMIN_TOKEN: 'x' });
   await w.ready;
   assert.equal(ctx.alarms.length, 1, 'an alarm is set on restore when sockets exist');
-  assert.equal(w.room.online(), 1);
-  w.room.players.get('z').lastMsg = Date.now() - 120_000; // silent for two minutes
+  assert.equal(w.room.online(), 2);
   await w.alarm();
+  assert.equal(live.closed, null);
+  w.sockets.delete('l'); w.room.close('l');
   assert.deepEqual(ws.closed, [1001, 'idle']);
   assert.equal(w.room.online(), 0);
   assert.equal(w.sockets.size, 0);
-  assert.equal(ctx.alarms.length, 1, 'no further alarm once the room is empty');
+  assert.equal(ctx.alarms.length, 2, 'the alarm was re-armed while Live was still connected');
+});
+
+test('World refreshes the attachment\'s heardAt at most every 30 s of messages', async () => {
+  const w = new World(fakeCtx(), { KV: memKV(), RACE_ADMIN_TOKEN: 'x' });
+  await w.ready;
+  const ws = fakeWs({ id: 'a', ipKey: 'k', since: 0 });
+  w.room.open('a', { ipKey: 'k' }, 0); w.sockets.set('a', ws);
+  await w.webSocketMessage(ws, JSON.stringify({ t: 'hi', v: 1, name: 'Aveli' }));
+  const first = ws.deserializeAttachment().heardAt;
+  assert.ok(Date.now() - first < 1000);
+  await w.webSocketMessage(ws, JSON.stringify({ t: 'p', x: 1, z: 1, h: 0, s: 0 }));
+  assert.equal(ws.deserializeAttachment().heardAt, first, 'not rewritten on every frame');
+  w.room.players.get('a').lastMsg = first + 31_000; ws.serializeAttachment({ ...ws.deserializeAttachment(), heardAt: first - 31_000 });
+  await w.webSocketMessage(ws, JSON.stringify({ t: 'p', x: 1, z: 1, h: 0, s: 0 }));
+  assert.ok(ws.deserializeAttachment().heardAt >= first, 'rewritten once the stored time is over 30 s old');
 });
