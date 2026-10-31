@@ -82,6 +82,8 @@ Best lap per name for the RealFi racetrack in the ecosystem game (`src/race.js`;
 | `GET /race/top?track=realfi-v1` | `{track, top: [{name, ms, at}]}`, the 10 fastest. No ids or IPs. |
 | `POST /race/time` | Body `{track, name, ms, splits}`, `splits` being the cumulative time in ms at each checkpoint. Replies `{ok: true, rank, best, top}`: `rank` is where the name's best now sits (1-based, `null` outside the top 100), `best` is true when this time became the name's new best on the board. Errors are `{error}` with 400 (`unknown_track`, `bad_name`, `rude_name`, `bad_splits`, `bad_ms`, `lap_too_fast`, `segment_too_fast` + `segment`), 403 (`origin`), 413 (`too_large`) or 429 (`rate`, with `Retry-After`). |
 | `DELETE /race/time` | Admin only (`x-race-admin` header). Removes by `id` or `name` (case-insensitive) from `track`, given in a JSON body or the query string. `{ok, removed}`. |
+| `POST /race/event` | Body `{track, kind}`, `kind` one of `open`, `found`, `start`, `finish` (sent by the page with `sendBeacon`). 204, nothing stored about the visitor beyond a hashed key that expires after 2 days. `post` is counted by the worker when a time is accepted. |
+| `GET /race/stats?track=realfi-v1&days=14` | Admin only. `{track, days: [{day, open, found, start, finish, post}]}`, newest UTC day first: visitors per day who reached each stage, each counted once per stage per day. Kept 90 days. |
 
 Checks: the track must be known; the name is 1–20 characters once invisible and bidi characters are stripped and spaces trimmed, has no control characters and passes a short rude-word list (case, accents, l33t and separators like `f.u.c.k` undone first; words like "cunt" only match whole, so Scunthorpe passes). There is one split per checkpoint, strictly increasing, and every segment, the last one to the line included, must take at least its length ÷ 30 m/s (the car tops out at 24 m/s). A lap must be at least the track length ÷ 30 m/s and under 30 minutes.
 
@@ -96,9 +98,20 @@ curl -X DELETE 'https://copilot-watch.benryan.workers.dev/race/time?track=realfi
 
 No `wrangler.toml` change is needed: it uses the existing `KV` binding.
 
+## Project submissions
+
+The form at `https://strike.benryan.com.au/ecosystem/submit/` posts here (`src/submit.js`); same CORS origins as the race board.
+
+| Endpoint | What it does |
+|---|---|
+| `POST /submit` | Body `{type: "new"\|"update", listing, name, tagline, category, uses[], description, site, x, github, logo, contact, notes, permission: true, company, elapsed}`. Checked (lengths, https links, a github.com link for `github`, an X handle, a known category and uses), stored as `sub:item:<at>-<id>` for 180 days, and sent to `SUBMIT_TG_CHAT` on Telegram as plain text. `{ok: true, id}`. Errors: 400 `bad_field` + `field`, 403 `origin`, 413 `too_large`, 429 `rate` (3 an hour per IP), 503 `busy` (30 a day in total). A filled `company` honeypot or `elapsed` under 3 s gets `{ok: true}` and is dropped. |
+| `GET /submit/list` | Admin only (`x-race-admin`). `{items}`, every stored submission, newest first. |
+
+Nothing goes live from here: an approved project is added by hand to copilot-check `ecosystem/js/projects.js` and the site redeployed. The alert chat is a Worker secret: `pnpm dlx wrangler@4 secret put SUBMIT_TG_CHAT`. Without it, submissions are still stored.
+
 ## Privacy
 
-Stored per chat: the Telegram chat id or Discord channel and server ids, the user id that set the watch (Discord permissions), the accounts watched, the alert threshold and language, and per account the last 200 fill ids and open copies seen (public data). Alert text is stored only when Telegram or Discord can't take it, for up to an hour so it can be resent; logs carry counts only. `/stop` deletes the chat's data; accounts no longer watched by anyone are deleted with it. Usage is kept as daily totals with no ids attached (new chats, `/stop`s, paper copies made, arrivals from the Copilot Check link), for 400 days. Race leaderboard: the name, lap time, checkpoint splits and when it was set, for the top 100 per track; no IPs or account ids.
+Stored per chat: the Telegram chat id or Discord channel and server ids, the user id that set the watch (Discord permissions), the accounts watched, the alert threshold and language, and per account the last 200 fill ids and open copies seen (public data). Alert text is stored only when Telegram or Discord can't take it, for up to an hour so it can be resent; logs carry counts only. `/stop` deletes the chat's data; accounts no longer watched by anyone are deleted with it. Usage is kept as daily totals with no ids attached (new chats, `/stop`s, paper copies made, arrivals from the Copilot Check link), for 400 days. Race leaderboard: the name, lap time, checkpoint splits and when it was set, for the top 100 per track; no IPs or account ids. Race funnel: daily counts only, plus a hashed visitor key per stage that expires after 2 days. Project submissions: what the form asks for (including the contact given), for 180 days; no IPs.
 
 ## Limits
 
