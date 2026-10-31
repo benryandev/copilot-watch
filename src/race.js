@@ -242,7 +242,11 @@ export async function handleRaceApi(req, env, { now = Date.now() } = {}) {
     }
     await kv.put(k, String(now), { expirationTtl: Math.max(60, RACE_RATE_SEC) }); // KV won't take a TTL under 60 s; the window is checked above
     const p = parseTime(r.body);
-    if (!p.ok) return json({ error: p.error, ...(p.segment != null ? { segment: p.segment } : {}) }, 400, origin);
+    if (!p.ok) {
+      // Rejections are rare and the message to the player is short: keep the detail in the log for a tail
+      console.log('race reject', JSON.stringify({ error: p.error, segment: p.segment ?? null, ms: r.body?.ms, splits: r.body?.splits, trace: Array.isArray(r.body?.trace) ? r.body.trace.length : null, name: r.body?.name }));
+      return json({ error: p.error, ...(p.segment != null ? { segment: p.segment } : {}) }, 400, origin);
+    }
     const { rank, best, rows } = await addTime(kv, p.entry, now);
     await countEvent(kv, p.entry.track, 'post', ip, now);
     return json({ ok: true, rank, best, top: pub(rows) }, 200, origin);
