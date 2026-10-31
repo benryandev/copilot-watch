@@ -1,4 +1,4 @@
 { "name": "copilot-watch", "private": true, "type": "module", "license": "MIT",
   "scripts": { "test": "node --test 'test/*.test.js'", "sync-core": "sh scripts/sync-core.sh",
                "deploy": "pnpm dlx wrangler@4 deploy", "tail": "pnpm dlx wrangler@4 tail",
-               "deploy:world": "pnpm dlx wrangler@4 deploy -c wrangler.world.toml", "dev:world": "pnpm dlx wrangler@4 dev -c wrangler.world.toml --port 8787 --local --var RACE_ADMIN_TOKEN:test --var WORLD_OWNER_TOKEN:test", "tail:world": "pnpm dlx wrangler@4 tail -c wrangler.world.toml" } }
+               "deploy:world": "pnpm dlx wrangler@4 deploy -c wrangler.world.toml && sh scripts/world-restart.sh", "restart:world": "sh scripts/world-restart.sh", "dev:world": "pnpm dlx wrangler@4 dev -c wrangler.world.toml --port 8787 --local --var RACE_ADMIN_TOKEN:test --var WORLD_OWNER_TOKEN:test", "tail:world": "pnpm dlx wrangler@4 tail -c wrangler.world.toml" } }
