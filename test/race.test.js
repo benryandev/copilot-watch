@@ -308,3 +308,14 @@ test('segments allow corner-cutting headroom; the whole lap still cannot beat th
   assert.equal(await err(await post(env(), good(lap(RACE_MAX_SPEED + 0.5)))), 'lap_too_fast');
   assert.ok(RACE_SEG_MAX_SPEED > RACE_MAX_SPEED);
 });
+
+// The last sample lands on the line a few ms after the previous one; positions are rounded to 0.1 m, so a 0.2 m step in
+// 5 ms reads as 40+ m/s. The speed check allows for the rounding (Ben's 25.252 lost its ghost to this on 31 Oct).
+test('trace speed check allows for position rounding over a tiny interval', () => {
+  const L = lap(), tr = traceFor(L);
+  const last = tr[tr.length - 1];
+  const nudged = [...tr.slice(0, -1), [last[0] - 5, last[1] - 0.1, last[2] - 0.2, last[3]], last];
+  assert.ok(parseTrace(nudged, L.ms, T).ok, 'a 0.22 m step in 5 ms is rounding, not speed');
+  const leap = [...tr.slice(0, -1), [last[0] - 5, last[1] - 1, last[2] - 0.5, last[3]], last];
+  assert.equal(parseTrace(leap, L.ms, T).why, 'speed', 'a 1.1 m step in 5 ms is still impossible');
+});

@@ -21,6 +21,7 @@ export const RACE_TRACE_MIN_PATH = 0.7;
  * with positions rounded to 0.1 m, and a landing or a nudge off a wall moves the car a little between frames. Ben's first real
  * lap (31 Oct 2026) peaked at 29.3 m/s between samples; the lap itself averaged 25 m/s. A teleport is hundreds of m/s. */
 export const RACE_TRACE_MAX_SPEED = 40;
+export const RACE_TRACE_ROUNDING = 0.3; // m: two positions each rounded to 0.1 m can differ by this much with no movement at all
 export const RACE_ADMIN_HEADER = 'x-race-admin';
 // Funnel stages, in order. "post" is counted here when a time is accepted; the page sends the rest.
 export const RACE_EVENTS = ['open', 'found', 'start', 'finish', 'post'];
@@ -92,7 +93,7 @@ export function parseTrace(trace, ms, t) {
       const dt = tt - prev[0];
       if (dt <= 0) return bad('order');
       const d = Math.hypot(x - prev[1], z - prev[2]);
-      if (d / (dt / 1000) > RACE_TRACE_MAX_SPEED) return bad('speed');
+      if (d > (RACE_TRACE_MAX_SPEED * dt) / 1000 + RACE_TRACE_ROUNDING) return bad('speed'); // speed limit, plus what 0.1 m rounding can add
       path += d;
     }
     out.push([tt, Math.round(x * 10) / 10, Math.round(z * 10) / 10, Math.round(h * 100) / 100]);
