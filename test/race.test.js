@@ -1,5 +1,5 @@
 import test from 'node:test'; import assert from 'node:assert/strict';
-import { handleRaceApi, parseTime, isRude, cleanName, RACE_ORIGINS, RACE_KEEP, RACE_SHOW, RACE_ADMIN_HEADER } from '../src/race.js';
+import { handleRaceApi, parseTime, parseTrace, isRude, cleanName, RACE_ORIGINS, RACE_KEEP, RACE_SHOW, RACE_ADMIN_HEADER, RACE_TRACE_MAX, RACE_MAX_BODY } from '../src/race.js';
 import { RACE_TRACKS, RACE_MAX_SPEED, RACE_MAX_MS } from '../src/race-tracks.js';
 import handler from '../src/worker.js';
 import { memKV } from './kv-mem.js';
@@ -101,7 +101,7 @@ test('rate limit: one post per IP per 60 s, counted even when invalid; another I
   // unparseable JSON and oversized bodies are refused before the limit and don't count
   const e2 = env();
   assert.equal((await post(e2, '{nope', { ip })).status, 400);
-  assert.equal((await post(e2, 'x'.repeat(5000), { ip })).status, 413);
+  assert.equal((await post(e2, 'x'.repeat(RACE_MAX_BODY + 1), { ip })).status, 413);
   assert.equal((await post(e2, good(), { ip })).status, 200);
   // the IP itself is never stored, only a hash
   assert.ok(![...e.KV.m.keys(), ...e.KV.m.values()].some(x => JSON.stringify(x).includes(ip)));
@@ -218,3 +218,68 @@ test('funnel: page events count once per IP per stage per day; posts count on ac
     { day: '2026-10-30', open: 2, found: 1, start: 1, finish: 1, post: 1 },
   ]);
 });
+
+// ---- ghost traces ----
+
+/** A believable trace for lap L: a straight line at the lap's average speed, ten samples a second, ending on the lap time. */
+const traceFor = (L, step = 100) => {
+  const v = T.length / (L.ms / 1000), out = [];
+  for (let t = 0; t <= L.ms; t += step) out.push([t, (v * t) / 1000, 0, 0]);
+  if (out.at(-1)[0] !== L.ms) out.push([L.ms, T.length, 0, 0]);
+  return out;
+};
+
+test('ghost trace: accepted, rounded, stored, served by /race/ghost, never in /race/top', async () => {
+  const e = env(); const L = lap(20); const tr = traceFor(L);
+  tr[1][1] += 0.04; tr[1][3] = 0.123456; // rounding: 0.1 m, 0.01 rad
+  const r = await (await post(e, good({ trace: tr }))).json();
+  assert.equal(r.ok, true);
+  for (const row of r.top) assert.deepEqual(Object.keys(row).sort(), ['at', 'ms', 'name']);
+  const g = await (await handleRaceApi(req('GET', `/race/ghost?track=${TRACK}`), e)).json();
+  assert.equal(g.ghost.name, 'Ben'); assert.equal(g.ghost.ms, L.ms); assert.deepEqual(g.ghost.splits, L.splits);
+  assert.equal(g.ghost.trace.length, tr.length);
+  assert.deepEqual(g.ghost.trace[1], [100, Math.round((tr[1][1]) * 10) / 10, 0, 0.12]);
+  // the admin view says how long the trace is rather than dumping it
+  const a = await (await handleRaceApi(req('GET', `/race/top?track=${TRACK}`, { headers: { [RACE_ADMIN_HEADER]: ADMIN } }), env({ KV: e.KV, RACE_ADMIN_TOKEN: ADMIN }))).json();
+  assert.equal(a.all[0].trace, tr.length);
+  // no trace: still fine, ghost reports null trace (the page synthesises one from the splits)
+  const e2 = env();
+  assert.equal((await post(e2, good())).status, 200);
+  const g2 = await (await handleRaceApi(req('GET', `/race/ghost?track=${TRACK}`), e2)).json();
+  assert.equal(g2.ghost.trace, null); assert.deepEqual(g2.ghost.splits, L.splits);
+  assert.equal((await (await handleRaceApi(req('GET', `/race/ghost?track=${TRACK}`), env())).json()).ghost, null);
+  assert.equal((await handleRaceApi(req('GET', '/race/ghost?track=nope'), env())).status, 404);
+});
+
+test('ghost trace: the ghost is the fastest lap, and a slower lap with a trace does not replace it', async () => {
+  const e = env(); const fast = lap(25), slow = lap(15);
+  assert.equal((await post(e, good({ name: 'A', ...fast }))).status, 200);
+  assert.equal((await post(e, good({ name: 'B', ...slow, trace: traceFor(slow, 200) }), { now: NOW + 1 })).status, 200); // a 43 s lap, thinned like the page does
+  const g = await (await handleRaceApi(req('GET', `/race/ghost?track=${TRACK}`), e)).json();
+  assert.equal(g.ghost.name, 'A'); assert.equal(g.ghost.trace, null);
+});
+
+test('ghost trace: bad traces are refused', () => {
+  const L = lap(20), tr = traceFor(L);
+  const cases = {
+    'not an array': 'x',
+    'one sample': [tr[0]],
+    'too many samples': traceFor(L, Math.floor(L.ms / (RACE_TRACE_MAX + 5))),
+    'short sample': [...tr.slice(0, -1), [L.ms, 1, 2]],
+    'time not increasing': tr.map((s, i) => (i === 2 ? [tr[1][0], ...s.slice(1)] : s)),
+    'time past the lap': [...tr.slice(0, -1), [L.ms + 1, T.length, 0, 0]],
+    'non-finite': tr.map((s, i) => (i === 3 ? [s[0], NaN, s[2], s[3]] : s)),
+    'off the map': tr.map((s, i) => (i === 3 ? [s[0], 5000, s[2], s[3]] : s)),
+    'too fast between samples': tr.map((s, i) => (i === 3 ? [s[0], s[1] + 4, s[2], s[3]] : s)), // +4 m in 100 ms = 40 m/s
+    'starts late': tr.filter(s => s[0] > 1200),
+    'ends early': tr.filter(s => s[0] < L.ms - 2000),
+    'path too short': tr.map(s => [s[0], s[1] * 0.5, 0, 0]),
+  };
+  for (const [what, trace] of Object.entries(cases)) assert.equal(parseTrace(trace, L.ms, T).error, 'bad_trace', what);
+  assert.equal(parseTime(good({ trace: 'x' })).error, 'bad_trace');
+  assert.ok(parseTime(good({ trace: tr })).ok);
+  assert.ok(parseTime(good({ trace: null })).ok);
+  // a real-looking body with 400 samples fits under the size limit
+  assert.ok(JSON.stringify(good({ trace: traceFor(L, Math.ceil(L.ms / (RACE_TRACE_MAX - 1))) })).length < RACE_MAX_BODY);
+});
+

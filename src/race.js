@@ -1,5 +1,7 @@
 // Race time-trial leaderboard for the Copilot Check ecosystem game: best lap per name, top 100 per track in one KV key.
-//   race:top:<track>   [{id, name, key, ms, splits, at}] sorted by ms, then earlier at; at most 100, one per name (key = lower case)
+//   race:top:<track>   [{id, name, key, ms, splits, trace, at}] sorted by ms, then earlier at; at most 100, one per name (key = lower case)
+//                      trace: the lap's path for the ghost car, [[t ms, x, z, heading], ...] ten times a second, or null for laps
+//                      posted before ghosts existed (the page then rebuilds a ghost from the checkpoint times)
 //   race:ip:<hash>     attempt time; expires after 60 s (one post per IP per minute). The IP is hashed, never stored.
 //   race:stats:<track>:<YYYY-MM-DD>  {open, found, start, finish, post}: visitors per UTC day who reached each stage
 //   race:seen:<hash>   one per IP, track, day and stage, so a visitor counts once per stage per day; expires after 2 days
@@ -10,7 +12,11 @@ import { safeEqual } from './telegram.js';
 import { newId } from './paper.js';
 
 export const RACE_ORIGINS = ['https://strike.benryan.com.au', 'http://localhost:8766'];
-export const RACE_KEEP = 100, RACE_SHOW = 10, RACE_RATE_SEC = 60, RACE_MAX_BODY = 4096, RACE_NAME_MAX = 20;
+export const RACE_KEEP = 100, RACE_SHOW = 10, RACE_RATE_SEC = 60, RACE_MAX_BODY = 16384, RACE_NAME_MAX = 20;
+/** Ghost trace: at least 2 and at most 400 samples (40 s at ten a second; the page thins longer laps). */
+export const RACE_TRACE_MIN = 2, RACE_TRACE_MAX = 400;
+/** A trace must cover at least this share of the lap length (an inside line is shorter than the centreline, a fake is far shorter). */
+export const RACE_TRACE_MIN_PATH = 0.7;
 export const RACE_ADMIN_HEADER = 'x-race-admin';
 // Funnel stages, in order. "post" is counted here when a time is accepted; the page sends the rest.
 export const RACE_EVENTS = ['open', 'found', 'start', 'finish', 'post'];
@@ -67,6 +73,32 @@ export function cleanName(raw) {
 
 const minMs = metres => (metres * 1000) / RACE_MAX_SPEED;
 
+/** Validate an optional ghost trace against the lap time and the track. Returns {ok, trace} (null when none given) or {ok: false, error}. */
+export function parseTrace(trace, ms, t) {
+  if (trace === undefined || trace === null) return { ok: true, trace: null };
+  const bad = { ok: false, error: 'bad_trace' };
+  if (!Array.isArray(trace) || trace.length < RACE_TRACE_MIN || trace.length > RACE_TRACE_MAX) return bad;
+  const out = []; let path = 0, prev = null;
+  for (const s of trace) {
+    if (!Array.isArray(s) || s.length !== 4) return bad;
+    const [tt, x, z, h] = s;
+    if (!Number.isSafeInteger(tt) || tt < 0 || tt > ms) return bad;
+    if (![x, z, h].every(v => typeof v === 'number' && Number.isFinite(v)) || Math.abs(x) > 2000 || Math.abs(z) > 2000 || Math.abs(h) > 100) return bad;
+    if (prev) {
+      const dt = tt - prev[0];
+      if (dt <= 0) return bad;
+      const d = Math.hypot(x - prev[1], z - prev[2]);
+      if (d / (dt / 1000) > RACE_MAX_SPEED) return bad;
+      path += d;
+    }
+    out.push([tt, Math.round(x * 10) / 10, Math.round(z * 10) / 10, Math.round(h * 100) / 100]);
+    prev = s;
+  }
+  if (out[0][0] > 1000 || ms - out[out.length - 1][0] > 1500) return bad; // starts on the line, ends at the line
+  if (path < RACE_TRACE_MIN_PATH * t.length) return bad;
+  return { ok: true, trace: out };
+}
+
 /** Validate a posted time. Returns {ok, entry: {track, name, key, ms, splits}} or {ok: false, error}. */
 export function parseTime(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return { ok: false, error: 'bad_json' };
@@ -83,7 +115,9 @@ export function parseTime(body) {
   const at = [...splits, ms], dist = [...cps, t.length];
   for (let i = 0; i < at.length; i++)
     if (at[i] - (i ? at[i - 1] : 0) < minMs(dist[i] - (i ? dist[i - 1] : 0))) return { ok: false, error: 'segment_too_fast', segment: i };
-  return { ok: true, entry: { track: body.track, name: n.name, key: n.name.toLowerCase(), ms, splits: [...splits] } };
+  const tr = parseTrace(body.trace, ms, t);
+  if (!tr.ok) return tr;
+  return { ok: true, entry: { track: body.track, name: n.name, key: n.name.toLowerCase(), ms, splits: [...splits], trace: tr.trace } };
 }
 
 // ---- board ----
@@ -98,7 +132,7 @@ export async function addTime(kv, entry, now = Date.now()) {
   const rows = await getBoard(kv, entry.track);
   const mine = rows.find(r => r.key === entry.key);
   if (mine && mine.ms <= entry.ms) return { rank: rows.indexOf(mine) + 1, best: false, rows };
-  const row = { id: newId(), name: entry.name, key: entry.key, ms: entry.ms, splits: entry.splits, at: now };
+  const row = { id: newId(), name: entry.name, key: entry.key, ms: entry.ms, splits: entry.splits, trace: entry.trace || null, at: now };
   const next = [...rows.filter(r => r.key !== entry.key), row].sort(order).slice(0, RACE_KEEP);
   const i = next.indexOf(row);
   if (i < 0) return { rank: mine ? rows.indexOf(mine) + 1 : null, best: false, rows }; // missed the top 100: nothing changes
@@ -178,8 +212,16 @@ export async function handleRaceApi(req, env, { now = Date.now() } = {}) {
     if (!Object.hasOwn(RACE_TRACKS, track)) return json({ error: 'unknown_track' }, 404, origin);
     const rows = await getBoard(kv, track);
     // With the admin header, the whole board with ids (so an entry can be deleted by id); the public gets names only.
-    if (isAdmin(req, env)) return json({ track, all: rows.map(({ id, name, ms, splits, at }) => ({ id, name, ms, splits, at })) }, 200, origin);
+    if (isAdmin(req, env)) return json({ track, all: rows.map(({ id, name, ms, splits, trace, at }) => ({ id, name, ms, splits, trace: trace ? trace.length : null, at })) }, 200, origin);
     return json({ track, top: pub(rows) }, 200, origin);
+  }
+
+  // The ghost: the fastest lap on the board with its checkpoint splits and, when it has one, its path
+  if (req.method === 'GET' && url.pathname === '/race/ghost') {
+    const track = url.searchParams.get('track') || '';
+    if (!Object.hasOwn(RACE_TRACKS, track)) return json({ error: 'unknown_track' }, 404, origin);
+    const r = (await getBoard(kv, track))[0];
+    return json({ track, ghost: r ? { name: r.name, ms: r.ms, splits: r.splits, trace: r.trace || null, at: r.at } : null }, 200, origin);
   }
 
   if (req.method === 'POST' && url.pathname === '/race/time') {
