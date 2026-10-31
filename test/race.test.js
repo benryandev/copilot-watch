@@ -91,6 +91,30 @@ test('names: cleaned, invisible characters stripped, Scunthorpe-style names pass
     assert.equal(isRude(bad), true, bad);
 });
 
+test('one row per player: a new name from the same address replaces that player\'s row; slower under a new name changes nothing', async () => {
+  const e = env(); const ip = '7.7.7.7';
+  const dunk = lap(20), dunkSlow = lap(18), dunkFast = lap(22), ben = lap(21), benFast = lap(23);
+  let r = await post(e, good({ name: 'Dunk', ...dunk }), { ip, now: NOW });
+  assert.equal(r.status, 200); assert.equal((await r.json()).rank, 1);
+  // Slower lap, new name, same address: no new row; the reply ranks the row they already hold
+  r = await post(e, good({ name: 'Dunk 2', ...dunkSlow }), { ip, now: NOW + 20_000 });
+  let b = await r.json(); assert.equal(r.status, 200); assert.equal(b.best, false); assert.equal(b.rank, 1);
+  assert.deepEqual(b.top.map(x => x.name), ['Dunk']);
+  // Faster lap, new name, same address: the one row is replaced, name and all
+  r = await post(e, good({ name: 'XXX Dunk XXX', ...dunkFast }), { ip, now: NOW + 40_000 });
+  b = await r.json(); assert.equal(b.best, true); assert.deepEqual(b.top.map(x => [x.name, x.ms]), [['XXX Dunk XXX', dunkFast.ms]]);
+  // Another address with its own name is a second player
+  r = await post(e, good({ name: 'Ben', ...ben }), { ip: '6.6.6.6', now: NOW + 60_000 });
+  b = await r.json(); assert.equal(b.rank, 2); assert.deepEqual(b.top.map(x => x.name), ['XXX Dunk XXX', 'Ben']);
+  // The same name from another address still replaces by name (one row per name holds too)
+  r = await post(e, good({ name: 'Ben', ...benFast }), { ip: '5.5.5.5', now: NOW + 80_000 });
+  b = await r.json(); assert.deepEqual(b.top.map(x => [x.name, x.ms]), [['Ben', benFast.ms], ['XXX Dunk XXX', dunkFast.ms]]);
+  // The address hash never leaves the worker
+  for (const row of b.top) assert.deepEqual(Object.keys(row).sort(), ['at', 'ms', 'name']);
+  const g = await (await handleRaceApi(req('GET', `/race/ghost?track=${TRACK}`), e, { now: NOW })).json();
+  assert.ok(!('ipk' in g.ghost) && !('key' in g.ghost));
+});
+
 test(`rate limit: one post per IP per ${RACE_RATE_SEC} s, counted even when invalid; another IP is fine`, async () => {
   assert.equal(RACE_RATE_SEC, 10); // two laps can finish 25 s apart; 30 s swallowed a best lap (1 Nov 2026)
   const e = env(); const ip = '9.9.9.9';

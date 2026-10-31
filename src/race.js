@@ -133,15 +133,19 @@ const order = (a, b) => a.ms - b.ms || a.at - b.at;
 const pub = rows => rows.slice(0, RACE_SHOW).map(({ name, ms, at }) => ({ name, ms, at }));
 export const getBoard = async (kv, track) => (await kv.get(boardKey(track), 'json')) || [];
 
-/** Add a validated entry, keeping each name's best. Returns {rank (1-based or null), best, rows}. */
+/** Add a validated entry: one row per name and one per player (entry.ipk, a hash of the poster's address), each
+ *  keeping its best. A faster lap under a new name from the same address replaces that player's row, name and all;
+ *  a slower one changes nothing (one player filled nine of the top ten under name variants, 1 Nov 2026).
+ *  Returns {rank (1-based or null), best, rows}. */
 export async function addTime(kv, entry, now = Date.now()) {
   const rows = await getBoard(kv, entry.track);
-  const mine = rows.find(r => r.key === entry.key);
-  if (mine && mine.ms <= entry.ms) return { rank: rows.indexOf(mine) + 1, best: false, rows };
-  const row = { id: newId(), name: entry.name, key: entry.key, ms: entry.ms, splits: entry.splits, trace: entry.trace || null, at: now };
-  const next = [...rows.filter(r => r.key !== entry.key), row].sort(order).slice(0, RACE_KEEP);
+  const same = r => r.key === entry.key || (entry.ipk && r.ipk === entry.ipk);
+  const held = rows.filter(same).sort(order)[0];
+  if (held && held.ms <= entry.ms) return { rank: rows.indexOf(held) + 1, best: false, rows };
+  const row = { id: newId(), name: entry.name, key: entry.key, ipk: entry.ipk || null, ms: entry.ms, splits: entry.splits, trace: entry.trace || null, at: now };
+  const next = [...rows.filter(r => !same(r)), row].sort(order).slice(0, RACE_KEEP);
   const i = next.indexOf(row);
-  if (i < 0) return { rank: mine ? rows.indexOf(mine) + 1 : null, best: false, rows }; // missed the top 100: nothing changes
+  if (i < 0) return { rank: held ? rows.indexOf(held) + 1 : null, best: false, rows }; // missed the top 100: nothing changes
   await kv.put(boardKey(entry.track), JSON.stringify(next));
   return { rank: i + 1, best: true, rows: next };
 }
@@ -250,6 +254,7 @@ export async function handleRaceApi(req, env, { now = Date.now() } = {}) {
       console.log('race reject', JSON.stringify({ error: p.error, segment: p.segment ?? null, ms: r.body?.ms, splits: r.body?.splits, trace: Array.isArray(r.body?.trace) ? r.body.trace.length : null, name: r.body?.name }));
       return json({ error: p.error, ...(p.segment != null ? { segment: p.segment } : {}) }, 400, origin);
     }
+    if (ip !== '?') p.entry.ipk = await hashHex(`race:board:${ip}`); // stored on the row, never sent out
     const { rank, best, rows } = await addTime(kv, p.entry, now);
     await countEvent(kv, p.entry.track, 'post', ip, now);
     return json({ ok: true, rank, best, top: pub(rows), ...(p.traceDropped ? { traceDropped: p.traceDropped } : {}) }, 200, origin);
