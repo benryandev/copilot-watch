@@ -10,7 +10,8 @@ const minMs = m => (m * 1000) / RACE_MAX_SPEED;
 const segMs = m => (m * 1000) / RACE_SEG_MAX_SPEED; // a single segment's floor (looser than the lap's)
 /** A clean lap at `speed` m/s (well under RACE_MAX_SPEED). */
 const lap = (speed = 20) => ({ splits: T.checkpoints.map(d => Math.round((d * 1000) / speed)), ms: Math.round((T.length * 1000) / speed) });
-const good = (over = {}) => ({ track: TRACK, name: 'Ben', ...lap(), ...over });
+// Every real client sends a trace; a post without a valid one is refused (1 Nov 2026), so the default body carries one
+const good = (over = {}) => { const b = { track: TRACK, name: 'Ben', ...lap(), ...over }; if (!('trace' in over)) b.trace = traceFor({ ms: b.ms }, Math.max(100, Math.ceil(b.ms / 399 / 100) * 100)); return b; }; // thinned like the page for long laps
 const env = (o = {}) => ({ KV: memKV(), ...o });
 const req = (method, path, { body, origin = O, ip = '1.1.1.1', headers = {} } = {}) => new Request(`https://w${path}`, {
   method, headers: { ...(origin ? { origin } : {}), 'content-type': 'application/json', 'cf-connecting-ip': ip, ...headers },
@@ -271,11 +272,10 @@ test('ghost trace: accepted, rounded, stored, served by /race/ghost, never in /r
   // the admin view says how long the trace is rather than dumping it
   const a = await (await handleRaceApi(req('GET', `/race/top?track=${TRACK}`, { headers: { [RACE_ADMIN_HEADER]: ADMIN } }), env({ KV: e.KV, RACE_ADMIN_TOKEN: ADMIN }))).json();
   assert.equal(a.all[0].trace, tr.length);
-  // no trace: still fine, ghost reports null trace (the page synthesises one from the splits)
+  // no trace: refused (since 1 Nov 2026 the trace is the anti-cheat; every real client sends one)
   const e2 = env();
-  assert.equal((await post(e2, good())).status, 200);
-  const g2 = await (await handleRaceApi(req('GET', `/race/ghost?track=${TRACK}`), e2)).json();
-  assert.equal(g2.ghost.trace, null); assert.deepEqual(g2.ghost.splits, L.splits);
+  const noTrace = await post(e2, good({ trace: null }));
+  assert.equal(noTrace.status, 400); assert.equal(await err(noTrace), 'bad_trace');
   assert.equal((await (await handleRaceApi(req('GET', `/race/ghost?track=${TRACK}`), env())).json()).ghost, null);
   assert.equal((await handleRaceApi(req('GET', '/race/ghost?track=nope'), env())).status, 404);
 });
@@ -285,7 +285,7 @@ test('ghost trace: the ghost is the fastest lap, and a slower lap with a trace d
   assert.equal((await post(e, good({ name: 'A', ...fast }))).status, 200);
   assert.equal((await post(e, good({ name: 'B', ...slow, trace: traceFor(slow, 200) }), { now: NOW + 1 })).status, 200); // a 43 s lap, thinned like the page does
   const g = await (await handleRaceApi(req('GET', `/race/ghost?track=${TRACK}`), e)).json();
-  assert.equal(g.ghost.name, 'A'); assert.equal(g.ghost.trace, null);
+  assert.equal(g.ghost.name, 'A'); assert.ok(Array.isArray(g.ghost.trace), 'the leader\'s own trace');
 });
 
 test('ghost trace: bad traces are refused', () => {
@@ -308,12 +308,25 @@ test('ghost trace: bad traces are refused', () => {
   for (const [what, trace] of Object.entries(cases)) { const r = parseTrace(trace, L.ms, T); assert.equal(r.error, 'bad_trace', what); why[what] = r.why; }
   assert.deepEqual(why, { 'not an array': 'shape', 'one sample': 'shape', 'too many samples': 'shape', 'short sample': 'shape', 'time not increasing': 'order',
     'time past the lap': 'range', 'non-finite': 'range', 'off the map': 'range', 'too fast between samples': 'speed', 'starts late': 'ends', 'ends early': 'ends', 'path too short': 'path' });
-  // A bad trace costs the ghost, never the lap: the time is kept and the client is told the path was dropped
+  // A bad or missing trace refuses the lap: the trace is the check that sees every tenth of a second
   const dropped = parseTime(good({ trace: 'x' }));
-  assert.ok(dropped.ok); assert.equal(dropped.entry.trace, null); assert.equal(dropped.traceDropped, 'shape');
+  assert.equal(dropped.ok, false); assert.equal(dropped.error, 'bad_trace'); assert.equal(dropped.why, 'shape');
   const kept = parseTime(good({ trace: tr }));
-  assert.ok(kept.ok); assert.equal(kept.traceDropped, undefined); assert.ok(Array.isArray(kept.entry.trace));
-  assert.ok(parseTime(good({ trace: null })).ok);
+  assert.ok(kept.ok); assert.ok(Array.isArray(kept.entry.trace));
+  assert.equal(parseTime(good({ trace: null })).error, 'bad_trace');
+  // A lap driven at 34 m/s the whole way (the 1 Nov console cheat) is refused on its trace even when the splits fit
+  const fast = { splits: T.checkpoints.map(d => Math.round((d * 1000) / 28.5)), ms: Math.round((T.length * 1000) / 28.5) };
+  const cheat = parseTime(good({ ...fast, trace: traceFor(fast).map(([t, x, z, h]) => [t, x * 34 / 28.5, z, h]) }));
+  assert.equal(cheat.ok, false); assert.equal(cheat.error, 'bad_trace'); assert.equal(cheat.why, 'speed');
+  // 31 m/s the whole way slips the sample-to-sample check (0.3 m rounding slack per 100 ms) but not the one-second window
+  const f31 = { splits: T.checkpoints.map(d => Math.round((d * 1000) / 28.5)), ms: Math.round((T.length * 1000) / 28.5) };
+  const slow31 = parseTime(good({ ...f31, trace: traceFor(f31).map(([t, x, z, h]) => [t, x * 31 / 28.5, z, h]) }));
+  assert.equal(slow31.ok, false); assert.equal(slow31.why, 'speed');
+  // A real boost: 24 m/s with a 1.6 s burst at 28 m/s after the first jump, inside a lap whose average fits
+  const L24 = lap(23), boosted = [];
+  let x = 0; for (let t = 0; t <= L24.ms; t += 100) { boosted.push([t, Math.round(x * 10) / 10, 0, 0]); x += (t >= 3000 && t < 4600 ? 28 : 23) * 0.1; }
+  const ok = parseTime(good({ ...L24, trace: boosted }));
+  assert.equal(ok.ok, true, `a boosted lap must pass: ${ok.error} ${ok.why}`);
   // a real-looking body with 400 samples fits under the size limit
   assert.ok(JSON.stringify(good({ trace: traceFor(L, Math.ceil(L.ms / (RACE_TRACE_MAX - 1))) })).length < RACE_MAX_BODY);
 });

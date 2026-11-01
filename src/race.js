@@ -20,7 +20,8 @@ export const RACE_TRACE_MIN_PATH = 0.7;
 /** Fastest believable speed between two trace samples. Looser than the segment check (RACE_MAX_SPEED): samples are 100 ms apart
  * with positions rounded to 0.1 m, and a landing or a nudge off a wall moves the car a little between frames. Ben's first real
  * lap (31 Oct 2026) peaked at 29.3 m/s between samples; the lap itself averaged 25 m/s. A teleport is hundreds of m/s. */
-export const RACE_TRACE_MAX_SPEED = 40;
+export const RACE_TRACE_WINDOW_MS = 1000; // the trace speed limit is also checked over this long, past the rounding slack
+export const RACE_TRACE_MAX_SPEED = 29; // the car's 24 m/s, 28 for a moment after a jump boost, and a little slack (was 40: a 34 m/s lap got through, 1 Nov 2026)
 export const RACE_TRACE_ROUNDING = 0.3; // m: two positions each rounded to 0.1 m can differ by this much with no movement at all
 export const RACE_ADMIN_HEADER = 'x-race-admin';
 // Funnel stages, in order. "post" is counted here when a time is accepted; the page sends the rest.
@@ -83,7 +84,7 @@ export function parseTrace(trace, ms, t) {
   if (trace === undefined || trace === null) return { ok: true, trace: null };
   const bad = why => ({ ok: false, error: 'bad_trace', why }); // why: shape | range | order | speed | ends | path (for the log)
   if (!Array.isArray(trace) || trace.length < RACE_TRACE_MIN || trace.length > RACE_TRACE_MAX) return bad('shape');
-  const out = []; let path = 0, prev = null;
+  const out = []; let path = 0, prev = null, win = 0;
   for (const s of trace) {
     if (!Array.isArray(s) || s.length !== 4) return bad('shape');
     const [tt, x, z, h] = s;
@@ -95,6 +96,13 @@ export function parseTrace(trace, ms, t) {
       const d = Math.hypot(x - prev[1], z - prev[2]);
       if (d > (RACE_TRACE_MAX_SPEED * dt) / 1000 + RACE_TRACE_ROUNDING) return bad('speed'); // speed limit, plus what 0.1 m rounding can add
       path += d;
+      // The same limit over about a second, where the rounding allowance no longer hides a few m/s (a lap pinned at 31 m/s
+      // passes sample to sample; a real 28 m/s boost burst of 1.6 s inside a 24 m/s lap still fits)
+      while (win < out.length && tt - out[win][0] > RACE_TRACE_WINDOW_MS) win++;
+      if (win < out.length && tt - out[win][0] >= RACE_TRACE_WINDOW_MS * 0.8) {
+        const w = out[win], wd = Math.hypot(x - w[1], z - w[2]);
+        if (wd > (RACE_TRACE_MAX_SPEED * (tt - w[0])) / 1000 + RACE_TRACE_ROUNDING) return bad('speed');
+      }
     }
     out.push([tt, Math.round(x * 10) / 10, Math.round(z * 10) / 10, Math.round(h * 100) / 100]);
     prev = s;
@@ -120,10 +128,12 @@ export function parseTime(body) {
   const at = [...splits, ms], dist = [...cps, t.length];
   for (let i = 0; i < at.length; i++)
     if (at[i] - (i ? at[i - 1] : 0) < ((dist[i] - (i ? dist[i - 1] : 0)) * 1000) / RACE_SEG_MAX_SPEED) return { ok: false, error: 'segment_too_fast', segment: i };
-  // The trace only feeds the ghost: a bad one is dropped, the lap stands (the splits and lap checks above are the anti-cheat)
+  // The trace is the anti-cheat that sees every tenth of a second, not just the checkpoints: a lap without a valid
+  // one does not count (every real client sends one; since 1 Nov 2026, when a trace-less post could skip the speed check)
+  if (body.trace === undefined || body.trace === null) return { ok: false, error: 'bad_trace', why: 'missing' };
   const tr = parseTrace(body.trace, ms, t);
-  const entry = { track: body.track, name: n.name, key: n.name.toLowerCase(), ms, splits: [...splits], trace: tr.ok ? tr.trace : null };
-  return tr.ok ? { ok: true, entry } : { ok: true, entry, traceDropped: tr.why };
+  if (!tr.ok) return { ok: false, error: 'bad_trace', why: tr.why };
+  return { ok: true, entry: { track: body.track, name: n.name, key: n.name.toLowerCase(), ms, splits: [...splits], trace: tr.trace } };
 }
 
 // ---- board ----
@@ -257,17 +267,16 @@ export async function handleRaceApi(req, env, { now = Date.now(), waitUntil = nu
     }
     await kv.put(k, String(now), { expirationTtl: Math.max(60, RACE_RATE_SEC) }); // KV won't take a TTL under 60 s; the window is checked above
     const p = parseTime(r.body);
-    if (p.ok && p.traceDropped) console.log('race trace dropped', JSON.stringify({ why: p.traceDropped, ms: r.body.ms, name: r.body.name, trace: Array.isArray(r.body.trace) ? r.body.trace.slice(0, 3).concat([['…', r.body.trace.length]], r.body.trace.slice(-3)) : typeof r.body.trace }));
     if (!p.ok) {
       // Rejections are rare and the message to the player is short: keep the detail in the log for a tail
-      console.log('race reject', JSON.stringify({ error: p.error, segment: p.segment ?? null, ms: r.body?.ms, splits: r.body?.splits, trace: Array.isArray(r.body?.trace) ? r.body.trace.length : null, name: r.body?.name }));
+      console.log('race reject', JSON.stringify({ error: p.error, why: p.why ?? null, segment: p.segment ?? null, ms: r.body?.ms, splits: r.body?.splits, trace: Array.isArray(r.body?.trace) ? r.body.trace.length : null, name: r.body?.name }));
       return json({ error: p.error, ...(p.segment != null ? { segment: p.segment } : {}) }, 400, origin);
     }
     if (ip !== '?') p.entry.ipk = await hashHex(`race:board:${ip}`); // stored on the row, never sent out
     const { rank, best, rows } = await addTime(kv, p.entry, now);
     if (rank === 1 && best) announceRecord(env, { track: p.entry.track, name: p.entry.name, ms: p.entry.ms }, waitUntil);
     await countEvent(kv, p.entry.track, 'post', ip, now);
-    return json({ ok: true, rank, best, top: pub(rows), ...(p.traceDropped ? { traceDropped: p.traceDropped } : {}) }, 200, origin);
+    return json({ ok: true, rank, best, top: pub(rows) }, 200, origin);
   }
 
   // Funnel event from the page (sent with sendBeacon, so text/plain and no preflight). No reply body.
