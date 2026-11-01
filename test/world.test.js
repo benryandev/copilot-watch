@@ -1,5 +1,5 @@
 import test from 'node:test'; import assert from 'node:assert/strict';
-import { pickName, isReserved, RESERVED, parsePose, WORLD_RADIUS, WORLD_MAX_SPEED, WORLD_FRAME_MAX, Room, WORLD_MAX, WORLD_IP_MAX, COLOURS, offChecker, WORLD_FLOOD_BLOCK_MS, WORLD_IDLE_MS, RACE_JOIN_MS, RACE_GRID, RACE_GO_LEAD_MS, RACE_CLOSE_MS, RACE_KEEP_MS, RACE_CHECKPOINTS, RACE_MAX_RUN_MS } from '../src/world.js';
+import { pickName, isReserved, RESERVED, parsePose, WORLD_RADIUS, WORLD_MAX_SPEED, WORLD_FRAME_MAX, Room, WORLD_MAX, WORLD_IP_MAX, COLOURS, offChecker, WORLD_FLOOD_BLOCK_MS, WORLD_IDLE_MS, RACE_JOIN_MS, RACE_GRID, RACE_GO_LEAD_MS, RACE_CLOSE_MS, RACE_KEEP_MS, RACE_CHECKPOINTS, RACE_MAX_RUN_MS, EMOTE_COUNT, EMOTE_MAX_HZ } from '../src/world.js';
 
 test('pickName: clean names pass, reserved and rude fall back, owner may be Ben', () => {
   assert.deepEqual(pickName('Aveli'), { name: 'Aveli', fallback: false });
@@ -481,4 +481,22 @@ test('race: dead heats are measured from the first of the group, so a chain does
   for (const id of ['p0', 'p1', 'p2']) lapTo(r, id, RACE_CHECKPOINTS, 20_000);
   fin(r, 'p0', 25_000, 45_000); fin(r, 'p1', 25_000, 45_090); fin(r, 'p2', 25_000, 45_180);
   assert.deepEqual(r.order().map(o => [o.id, o.pos]), [['p0', 1], ['p1', 1], ['p2', 3]]);
+});
+
+// ---- emotes ----
+test('room: an emote goes to everyone else, not back to the sender; garbage is bad; more than two a second are dropped', () => {
+  const r = room(); hi(r, 'a', 'A'); hi(r, 'b', 'B'); hi(r, 'c', 'C');
+  assert.equal(EMOTE_COUNT, 5); assert.equal(EMOTE_MAX_HZ, 2);
+  const send = (e, now) => r.onMessage('a', JSON.stringify({ t: 'emote', e }), now);
+  let { out } = send(3, 1000);
+  assert.deepEqual(out.map(([id]) => id).sort(), ['b', 'c']);
+  assert.deepEqual(to(out, 'b'), [{ t: 'emote', id: 'a', e: 3 }]);
+  for (const bad of [5, -1, 1.5, '2', null, undefined]) {
+    const res = send(bad, 1100);
+    assert.deepEqual(res.out, [], JSON.stringify(bad)); assert.notEqual(res.close, 'flood');
+  }
+  assert.equal(send(0, 1200).out.length, 2); // second in the second: fine
+  assert.deepEqual(send(1, 1300).out, []); // third: dropped
+  assert.equal(send(1, 2001).out.length, 2); // the window has moved on
+  assert.deepEqual(r.onMessage('zz', JSON.stringify({ t: 'emote', e: 1 }), 3000).out, [], 'unknown socket');
 });

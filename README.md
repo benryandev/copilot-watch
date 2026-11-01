@@ -176,5 +176,7 @@ A second worker in this repo, `copilot-world` (`wrangler.world.toml`, entry `src
 
 Names go through the leaderboard's `cleanName`/`isRude`, then a reserved list (just `BenRyan`, Ben's own handle, since 31 Oct; any other Ben or Shan may be themselves): anything refused becomes `Driver NN`; two live players asking for the same name get `Name` and `Name (2)`. The owner token (`WORLD_OWNER_TOKEN` secret, sent as `owner` in `hi` or `name`) unlocks every reserved name; a guest token (`WORLD_GUEST_TOKENS` secret, JSON `{"<token>": ["Shan"]}`) unlocks only the names listed against it. The page stores either from `#owner=<token>` in the URL, so a person can be sent a link. Rotate by changing the secret. Secrets: `pnpm dlx wrangler@4 secret put RACE_ADMIN_TOKEN -c wrangler.world.toml` and the same for `WORLD_OWNER_TOKEN`.
 
+Emotes (1 Nov 2026): a socket sends `{t: 'emote', e: 0..4}` and the room relays `{t: 'emote', id, e}` to everyone else, at most two a second per socket (more are dropped like a pose flood; anything that isn't an integer 0 to 4 counts as a bad frame). The page draws the five: wave, party, fire, flag, thumbs up.
+
 Local: `pnpm run dev:world` (port 8787, test tokens) and `node qa/world-smoke.mjs` in another shell. Kill switch: `pnpm dlx wrangler@4 kv key put world:off 1 --namespace-id 22fd6ef1fa074edea7689bdaa2b5378f --remote` (delete the key to resume).
 

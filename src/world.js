@@ -2,7 +2,7 @@
 // Pure logic, no Cloudflare types; the Durable Object shell in world-worker.js wires it to websockets.
 import { cleanName } from './race.js';
 
-export const WORLD_VERSION = '2026-11-02.2'; // bumped on deploy so /presence shows which code the room runs
+export const WORLD_VERSION = '2026-11-02.3'; // bumped on deploy so /presence shows which code the room runs
 export const WORLD_OFF_KEY = 'world:off'; // any value under this KV key pauses new connections and closes live ones
 export const WORLD_OFF_TTL_MS = 30_000; // how long the room trusts its last read of the kill switch
 
@@ -97,6 +97,9 @@ export const RACE_KEEP_MS = 300_000; // a finished race is kept this long for th
 export const RACE_MAX_RUN_MS = 300_000; // a race nobody finishes ends on its own this long after the start
 export const RACE_MSG_MAX_HZ = 2; // race.open/join/leave per second per socket
 export const RACE_CHECKPOINTS = 5; // realfi-v1
+// ── Emotes: a wave, a party, fire, a flag, a thumbs up (the page draws them; the room only relays an index) ──
+export const EMOTE_COUNT = 5;
+export const EMOTE_MAX_HZ = 2; // per socket per second; each one fans out to the room
 
 export const COLOURS = ['#22d3ee', '#facc15', '#ec4899', '#3b82f6', '#f97316', '#a78bfa', '#0fb89c', '#94a3b8'];
 
@@ -136,7 +139,7 @@ export class Room {
     if (this.blocked('s:' + id, now) || this.blocked('i:' + ipKey, now)) return { ok: false, error: 'blocked' };
     if ([...this.players.values()].filter(p => p.ipKey === ipKey).length >= WORLD_IP_MAX) return { ok: false, error: 'ip' };
     if (this.players.size >= WORLD_MAX) return { ok: false, error: 'full' };
-    this.players.set(id, { id, ipKey, since: now, joined: false, name: null, colour: null, pose: null, times: [], pings: [], races: [], dropped: [], lastJump: -Infinity, bad: 0, renamedAt: -Infinity, lastMsg: now });
+    this.players.set(id, { id, ipKey, since: now, joined: false, name: null, colour: null, pose: null, times: [], pings: [], races: [], emotes: [], dropped: [], lastJump: -Infinity, bad: 0, renamedAt: -Infinity, lastMsg: now });
     return { ok: true };
   }
 
@@ -151,7 +154,7 @@ export class Room {
     for (const e of entries) {
       if (!e?.id) continue;
       // Last heard is what the attachment says (refreshed every 30 s of messages), else when it joined: a wake-up must not make a dead socket look alive
-      this.players.set(e.id, { id: e.id, ipKey: e.ipKey, since: e.since, joined: true, name: e.name, colour: e.colour, pose: null, times: [], pings: [], races: [], dropped: [], lastJump: -Infinity, bad: 0, renamedAt: -Infinity, lastMsg: e.heardAt ?? e.since ?? now });
+      this.players.set(e.id, { id: e.id, ipKey: e.ipKey, since: e.since, joined: true, name: e.name, colour: e.colour, pose: null, times: [], pings: [], races: [], emotes: [], dropped: [], lastJump: -Infinity, bad: 0, renamedAt: -Infinity, lastMsg: e.heardAt ?? e.since ?? now });
       this.colourN++;
     }
   }
@@ -212,6 +215,12 @@ export class Room {
       const asked = typeof m.name === 'string' ? m.name.slice(0, 40) : '';
       const named = pick.reason ? { t: 'named', name: p.name, reason: pick.reason, asked } : { t: 'named', name: p.name };
       return { out: [msg(id, named), ...this.broadcast({ t: 'rename', id, name: p.name }, id)] };
+    }
+    if (m.t === 'emote') {
+      if (!Number.isInteger(m.e) || m.e < 0 || m.e >= EMOTE_COUNT) return bad();
+      p.bad = 0;
+      if (over(p.emotes, EMOTE_MAX_HZ)) return flooded();
+      return { out: this.broadcast({ t: 'emote', id, e: m.e }, id) };
     }
     if (m.t === 'race.open' || m.t === 'race.join' || m.t === 'race.leave') {
       p.bad = 0;
