@@ -1,5 +1,5 @@
 import test from 'node:test'; import assert from 'node:assert/strict';
-import { pickName, isReserved, RESERVED, parsePose, WORLD_RADIUS, WORLD_MAX_SPEED, WORLD_FRAME_MAX, Room, WORLD_MAX, WORLD_IP_MAX, COLOURS, offChecker, WORLD_FLOOD_BLOCK_MS, WORLD_IDLE_MS, RACE_JOIN_MS, RACE_GRID } from '../src/world.js';
+import { pickName, isReserved, RESERVED, parsePose, WORLD_RADIUS, WORLD_MAX_SPEED, WORLD_FRAME_MAX, Room, WORLD_MAX, WORLD_IP_MAX, COLOURS, offChecker, WORLD_FLOOD_BLOCK_MS, WORLD_IDLE_MS, RACE_JOIN_MS, RACE_GRID, RACE_GO_LEAD_MS, RACE_CLOSE_MS, RACE_KEEP_MS, RACE_CHECKPOINTS } from '../src/world.js';
 
 test('pickName: clean names pass, reserved and rude fall back, owner may be Ben', () => {
   assert.deepEqual(pickName('Aveli'), { name: 'Aveli', fallback: false });
@@ -339,4 +339,75 @@ test('race: open or join before hi is bad; join with no race is race_none', () =
   const r = room(); r.open('x', { ipKey: 'kx' }, 0); hi(r, 'a', 'A');
   assert.deepEqual(raceMsg(r, 'x', { t: 'race.open' }, 1), { out: [] });
   assert.deepEqual(raceMsg(r, 'a', { t: 'race.join' }, 2).out, [['a', { t: 'err', error: 'race_none' }]]);
+});
+
+const raceOf = (n, now = 0) => { const r = room(); for (let i = 0; i < n; i++) hi(r, 'p' + i, 'P' + i); raceMsg(r, 'p0', { t: 'race.open' }, now); for (let i = 1; i < n; i++) raceMsg(r, 'p' + i, { t: 'race.join' }, now + i); return r; };
+const running = (n) => { const r = raceOf(n); r.timers(17_000); r.timers(20_000); return r; };
+const cp = (r, id, i, now) => raceMsg(r, id, { t: 'race.cp', i }, now);
+const fin = (r, id, ms, now) => raceMsg(r, id, { t: 'race.fin', ms }, now);
+const lapTo = (r, id, upTo, from) => { for (let i = 1; i <= upTo; i++) cp(r, id, i, from + i * 1000); };
+
+test('race timers: alone at go time cancels with "Nobody joined"; two entrants get race.go 3 s before startsAt', () => {
+  const alone = raceOf(1);
+  assert.equal(alone.due(), 20_000 - RACE_GO_LEAD_MS);
+  assert.equal(alone.timers(16_999).out.length, 0);
+  const c = alone.timers(17_000);
+  assert.deepEqual(to(c.out, 'p0'), [{ t: 'race.cancel', id: c.out[0][1].id, why: 'Nobody joined' }]);
+  assert.equal(alone.race, null); assert.equal(alone.due(), null);
+  const r = raceOf(2);
+  const g = r.timers(17_000);
+  assert.deepEqual(to(g.out, 'p1'), [{ t: 'race.go', id: r.race.id, startsAt: 20_000 }]);
+  assert.equal(r.race.state, 'countdown'); assert.equal(r.due(), 20_000);
+  assert.equal(r.timers(20_000).out.length, 0); assert.equal(r.race.state, 'running'); assert.equal(r.due(), null);
+});
+
+test('race: checkpoints count only in order and only while running; a repeat or a skip is ignored, not bad', () => {
+  const r = raceOf(2);
+  assert.equal(cp(r, 'p0', 1, 5000).out.length, 0, 'before Go: ignored'); assert.equal(r.players.get('p0').bad, 0);
+  r.timers(17_000); r.timers(20_000);
+  const a = cp(r, 'p0', 1, 25_000);
+  const pos = to(a.out, 'p1').find(m => m.t === 'race.pos');
+  assert.deepEqual(pos.order.find(o => o.id === 'p0'), { id: 'p0', name: 'P0', cp: 1, at: 5000, ms: null, fin: false, dnf: false, pos: 1 });
+  assert.equal(cp(r, 'p0', 1, 25_500).out.length, 0, 'repeat'); assert.equal(cp(r, 'p0', 3, 26_000).out.length, 0, 'skip');
+  assert.equal(r.players.get('p0').bad, 0);
+  assert.equal(cp(r, 'p0', 2, 27_000).out.length, 2); assert.equal(r.race.entrants.get('p0').cps.length, 2);
+});
+
+test('race: a non-entrant\'s cp or fin is a bad frame (a spectator who arrived mid-race too)', () => {
+  const r = running(2); hi(r, 'late', 'Late');
+  assert.deepEqual(cp(r, 'late', 1, 21_000), { out: [] }); assert.equal(r.players.get('late').bad, 1);
+  assert.deepEqual(fin(r, 'late', 25_000, 22_000), { out: [] }); assert.equal(r.players.get('late').bad, 2);
+});
+
+test('race: fin needs all checkpoints; order is finishers first by time, then furthest checkpoint earliest; dead heat shares a position', () => {
+  const r = running(3);
+  assert.equal(fin(r, 'p0', 24_000, 30_000).out.length, 0, 'no checkpoints yet');
+  lapTo(r, 'p0', RACE_CHECKPOINTS, 20_000); lapTo(r, 'p1', RACE_CHECKPOINTS, 20_100); lapTo(r, 'p2', 3, 20_200);
+  let o = r.order();
+  assert.deepEqual(o.map(x => x.id), ['p0', 'p1', 'p2'], 'furthest then earliest');
+  fin(r, 'p1', 25_010, 45_080); // p1 is received first…
+  fin(r, 'p0', 25_000, 45_000); // …but p0's finish carries an earlier server time? No: `at` is the receive time; 45000 < 45080 means p0 crossed earlier on the server clock
+  o = r.order();
+  assert.deepEqual(o.map(x => [x.id, x.pos]), [['p0', 1], ['p1', 1], ['p2', 3]], 'within 100 ms: dead heat for P1, next is P3');
+  assert.equal(o[0].ms, 25_000); assert.equal(o[0].at, 25_000); assert.equal(r.due(), 45_080 + RACE_CLOSE_MS, 'close runs from the first to cross by the server clock (p1)');
+  cp(r, 'p2', 4, 46_000); cp(r, 'p2', 5, 47_000);
+  const end = fin(r, 'p2', 27_000, 47_500);
+  const e = to(end.out, 'p0').find(m => m.t === 'race.end');
+  assert.ok(e, 'everyone finished: race.end'); assert.deepEqual(e.dnf, []); assert.equal(e.order[2].pos, 3);
+  assert.equal(r.race.state, 'done'); assert.equal(r.due(), 47_500 + RACE_KEEP_MS);
+  assert.equal(r.timers(47_500 + RACE_KEEP_MS).raceChanged, true); assert.equal(r.race, null);
+});
+
+test('race: 60 s after the first finisher the race ends with the rest DNF; a leaver mid-race is DNF; the host leaving after Go changes nothing', () => {
+  const r = running(3);
+  lapTo(r, 'p1', RACE_CHECKPOINTS, 20_000); fin(r, 'p1', 25_000, 46_000);
+  raceMsg(r, 'p0', { t: 'race.leave' }, 47_000); // the host, mid-race
+  assert.equal(r.race.state, 'running'); assert.equal(r.race.entrants.get('p0').dnf, true);
+  assert.equal(cp(r, 'p2', 1, 48_000).out.length, 3, 'p2 still racing: race.pos to all three in the room');
+  assert.equal(r.due(), 46_000 + RACE_CLOSE_MS);
+  const t = r.timers(46_000 + RACE_CLOSE_MS);
+  const e = to(t.out, 'p2').find(m => m.t === 'race.end');
+  assert.deepEqual(e.dnf.sort(), ['p0', 'p2']); assert.equal(e.order[0].id, 'p1');
+  // a new race can start once this one is done
+  assert.equal(raceMsg(r, 'p2', { t: 'race.open' }, 200_000).out.filter(([, m]) => m.t === 'race.open').length, 3);
 });

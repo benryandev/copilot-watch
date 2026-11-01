@@ -212,6 +212,12 @@ export class Room {
     if (m.t === 'race.open') { p.bad = 0; return this.openRace(id, now); }
     if (m.t === 'race.join') { p.bad = 0; return this.joinRace(id, now); }
     if (m.t === 'race.leave') { p.bad = 0; return this.leaveRace(id, now); }
+    if (m.t === 'race.cp' || m.t === 'race.fin') {
+      const res = m.t === 'race.cp' ? this.checkpoint(id, m.i, now) : this.finish(id, m.ms, now);
+      if (res === 'bad') return bad();
+      p.bad = 0;
+      return res;
+    }
     return bad();
   }
 
@@ -242,7 +248,7 @@ export class Room {
     return { out: this.broadcast({ t: 'race.grid', id: r.id, grid: this.grid() }), raceChanged: true };
   }
   /** Off the grid before Go (the slot is freed); a DNF once running. */
-  leaveRace(id) {
+  leaveRace(id, now = 0) {
     const r = this.race;
     if (!r || !r.entrants.has(id)) return { out: [] };
     if (r.state === 'open' || r.state === 'countdown') {
@@ -250,13 +256,77 @@ export class Room {
       return { out: this.broadcast({ t: 'race.grid', id: r.id, grid: this.grid() }), raceChanged: true };
     }
     const e = r.entrants.get(id);
-    if (r.state === 'running' && !e.fin && !e.dnf) { e.dnf = true; return { out: this.broadcast({ t: 'race.pos', id: r.id, order: this.order() }), raceChanged: true }; }
+    if (r.state === 'running' && !e.fin && !e.dnf) {
+      e.dnf = true;
+      const done = [...r.entrants.values()].every(x => x.fin || x.dnf);
+      return { out: done ? this.endRace(now) : this.broadcast({ t: 'race.pos', id: r.id, order: this.order() }), raceChanged: true };
+    }
     return { out: [] };
   }
-  /** Running order: refined in the timers/checkpoint work; for now, slot order with checkpoint counts. */
+  /** When the shell's alarm should next call timers(): the go/cancel moment, the start, the close after the first
+   * finisher, or when a done race is forgotten. */
+  due() {
+    const r = this.race;
+    if (!r) return null;
+    if (r.state === 'open') return r.startsAt - RACE_GO_LEAD_MS;
+    if (r.state === 'countdown') return r.startsAt;
+    if (r.state === 'running') return r.firstFinAt == null ? null : r.firstFinAt + RACE_CLOSE_MS;
+    return r.endedAt + RACE_KEEP_MS;
+  }
+  /** Run every timer due by `now`. A field of one is cancelled when its countdown would have started. */
+  timers(now) {
+    const out = [];
+    let raceChanged = false;
+    for (let guard = 0; guard < 8; guard++) {
+      const d = this.due(), r = this.race;
+      if (d == null || d > now) break;
+      raceChanged = true;
+      if (r.state === 'open') {
+        if (r.entrants.size < 2) { out.push(...this.broadcast({ t: 'race.cancel', id: r.id, why: 'Nobody joined' })); this.race = null; }
+        else { r.state = 'countdown'; out.push(...this.broadcast({ t: 'race.go', id: r.id, startsAt: r.startsAt })); }
+      } else if (r.state === 'countdown') r.state = 'running';
+      else if (r.state === 'running') out.push(...this.endRace(now));
+      else this.race = null;
+    }
+    return { out, raceChanged };
+  }
+  endRace(now) {
+    const r = this.race;
+    r.state = 'done'; r.endedAt = now;
+    for (const e of r.entrants.values()) if (!e.fin) e.dnf = true;
+    return this.broadcast({ t: 'race.end', id: r.id, order: this.order(), dnf: [...r.entrants].filter(([, e]) => e.dnf).map(([id]) => id) });
+  }
+  /** A checkpoint from an entrant: only the next one counts; repeats and skips are ignored (lag, a backed-over gate). */
+  checkpoint(id, i, now) {
+    const r = this.race;
+    if (!r || !r.entrants.has(id)) return 'bad';
+    const e = r.entrants.get(id);
+    if (r.state !== 'running' || e.fin || e.dnf) return { out: [] };
+    if (!Number.isInteger(i) || i !== e.cps.length + 1 || i > RACE_CHECKPOINTS) return { out: [] };
+    e.cps.push(now - r.startsAt);
+    return { out: this.broadcast({ t: 'race.pos', id: r.id, order: this.order() }), raceChanged: true };
+  }
+  /** The finish line, after every checkpoint. `ms` is the lap time the car measured, for the card only; the order
+   * is by the server's receive time. The race ends at once when nobody is left on track. */
+  finish(id, ms, now) {
+    const r = this.race;
+    if (!r || !r.entrants.has(id)) return 'bad';
+    const e = r.entrants.get(id);
+    if (r.state !== 'running' || e.fin || e.dnf || e.cps.length < RACE_CHECKPOINTS) return { out: [] };
+    e.fin = { at: now - r.startsAt, ms: Number.isFinite(ms) && ms > 0 && ms <= 600_000 ? Math.round(ms) : null };
+    if (r.firstFinAt == null) r.firstFinAt = now;
+    const done = [...r.entrants.values()].every(x => x.fin || x.dnf);
+    return { out: done ? this.endRace(now) : this.broadcast({ t: 'race.pos', id: r.id, order: this.order() }), raceChanged: true };
+  }
+  /** Running order: finishers first by the server clock, then the furthest checkpoint, earliest first; DNFs last.
+   * Finishes within RACE_DEAD_HEAT_MS of the one ahead share its position. */
   order() {
-    if (!this.race) return [];
-    return this.grid().map(g => { const e = this.race.entrants.get(g.id); return { id: g.id, name: g.name, cp: e.cps.length, at: e.cps.at(-1) ?? null, ms: e.fin?.ms ?? null, dnf: e.dnf }; });
+    const r = this.race;
+    if (!r) return [];
+    const rows = [...r.entrants].map(([id, e]) => ({ id, name: this.players.get(id)?.name ?? e.name, cp: e.cps.length, at: e.fin ? e.fin.at : (e.cps.at(-1) ?? null), ms: e.fin?.ms ?? null, fin: !!e.fin, dnf: e.dnf, slot: e.slot }));
+    rows.sort((a, b) => (a.dnf - b.dnf) || (b.fin - a.fin) || (a.fin ? a.at - b.at : (b.cp - a.cp) || ((a.at ?? Infinity) - (b.at ?? Infinity)) || (a.slot - b.slot)));
+    rows.forEach((x, i) => { x.pos = i > 0 && x.fin && rows[i - 1].fin && x.at - rows[i - 1].at <= RACE_DEAD_HEAT_MS ? rows[i - 1].pos : i + 1; });
+    return rows.map(({ slot, ...x }) => x);
   }
 
   /** Send the held snapshot (movers since the last one) to everyone. */
