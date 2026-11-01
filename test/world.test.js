@@ -1,5 +1,5 @@
 import test from 'node:test'; import assert from 'node:assert/strict';
-import { pickName, isReserved, RESERVED, parsePose, WORLD_RADIUS, WORLD_MAX_SPEED, WORLD_FRAME_MAX, Room, WORLD_MAX, WORLD_IP_MAX, COLOURS, offChecker, WORLD_FLOOD_BLOCK_MS, WORLD_IDLE_MS, RACE_JOIN_MS, RACE_GRID, RACE_GO_LEAD_MS, RACE_CLOSE_MS, RACE_KEEP_MS, RACE_CHECKPOINTS } from '../src/world.js';
+import { pickName, isReserved, RESERVED, parsePose, WORLD_RADIUS, WORLD_MAX_SPEED, WORLD_FRAME_MAX, Room, WORLD_MAX, WORLD_IP_MAX, COLOURS, offChecker, WORLD_FLOOD_BLOCK_MS, WORLD_IDLE_MS, RACE_JOIN_MS, RACE_GRID, RACE_GO_LEAD_MS, RACE_CLOSE_MS, RACE_KEEP_MS, RACE_CHECKPOINTS, RACE_MAX_RUN_MS } from '../src/world.js';
 
 test('pickName: clean names pass, reserved and rude fall back, owner may be Ben', () => {
   assert.deepEqual(pickName('Aveli'), { name: 'Aveli', fallback: false });
@@ -358,7 +358,7 @@ test('race timers: alone at go time cancels with "Nobody joined"; two entrants g
   const g = r.timers(17_000);
   assert.deepEqual(to(g.out, 'p1'), [{ t: 'race.go', id: r.race.id, startsAt: 20_000 }]);
   assert.equal(r.race.state, 'countdown'); assert.equal(r.due(), 20_000);
-  assert.equal(r.timers(20_000).out.length, 0); assert.equal(r.race.state, 'running'); assert.equal(r.due(), null);
+  assert.equal(r.timers(20_000).out.length, 0); assert.equal(r.race.state, 'running'); assert.equal(r.due(), 20_000 + RACE_MAX_RUN_MS, 'a running race always has an end in sight');
 });
 
 test('race: checkpoints count only in order and only while running; a repeat or a skip is ignored, not bad', () => {
@@ -422,4 +422,63 @@ test('race: raceState() round-trips through restoreRace() with entrants, slots, 
   assert.deepEqual(r2.grid(), r.grid()); assert.deepEqual(r2.order(), r.order()); assert.equal(r2.due(), r.due());
   assert.deepEqual(cp(r2, 'p1', 3, 30_000).out.length, 3, 'the restored race takes the next checkpoint');
   assert.equal(room().raceState(), null); const r3 = room(); r3.restoreRace(null); assert.equal(r3.race, null);
+});
+
+// ---- review fixes ----
+test('race: a field that empties during the countdown is cancelled at Go, never left running', () => {
+  const r = raceOf(2); r.timers(17_000);
+  raceMsg(r, 'p0', { t: 'race.leave' }, 18_000);
+  const last = raceMsg(r, 'p1', { t: 'race.leave' }, 18_500);
+  assert.ok(to(last.out, 'p0').some(m => m.t === 'race.cancel'), 'the last one out cancels it at once');
+  assert.equal(r.race, null);
+  assert.equal(r.timers(20_000).out.length, 0);
+});
+
+test('race: a running race ends on its own after RACE_MAX_RUN_MS even if nobody finishes', () => {
+  const r = running(2);
+  assert.equal(r.due(), 20_000 + RACE_MAX_RUN_MS);
+  const t = r.timers(20_000 + RACE_MAX_RUN_MS);
+  const e = to(t.out, 'p1').find(m => m.t === 'race.end');
+  assert.deepEqual(e.dnf.sort(), ['p0', 'p1']); assert.equal(r.race.state, 'done');
+});
+
+test('race: restoreRace marks entrants the roster no longer has as DNF, and ends the race if nobody is left', () => {
+  const r = running(3); lapTo(r, 'p1', 2, 20_000);
+  const snap = JSON.parse(JSON.stringify(r.raceState()));
+  const r2 = room(); hi(r2, 'p1', 'P1'); // only p1 came back after the restart
+  const res = r2.restoreRace(snap, 30_000);
+  assert.equal(r2.race.entrants.get('p0').dnf, true); assert.equal(r2.race.entrants.get('p2').dnf, true); assert.equal(r2.race.entrants.get('p1').dnf, false);
+  assert.equal(r2.race.state, 'running');
+  const r3 = room(); hi(r3, 'x', 'X'); const res3 = r3.restoreRace(snap, 30_000); // nobody from the race came back
+  assert.equal(r3.race.state, 'done'); assert.ok(res3.out.length >= 0);
+});
+
+test('race: open/join/leave are rate-limited like poses (over 2 a second is dropped, a flood closes)', () => {
+  const r = raceOf(2);
+  let dropped = 0;
+  for (let i = 0; i < 10; i++) { const o = raceMsg(r, 'p1', { t: i % 2 ? 'race.join' : 'race.leave' }, 100 + i * 10); if (!o.out.length) dropped++; }
+  assert.ok(dropped >= 7, `dropped ${dropped}`);
+  assert.equal(r.players.get('p1').bad, 0, 'rate drops are not bad frames');
+});
+
+test('race: hi during a race carries the race, so late arrivals see it', () => {
+  const r = running(2); lapTo(r, 'p0', 1, 20_000);
+  const { out } = hi(r, 'late', 'Late', 30_000);
+  const ok = to(out, 'late').find(m => m.t === 'ok');
+  assert.equal(ok.race.id, r.race.id); assert.equal(ok.race.state, 'running'); assert.equal(ok.race.order[0].id, 'p0'); assert.equal(ok.race.grid.length, 2);
+  const r2 = room(); hi(r2, 'a', 'A');
+  assert.equal(to(hi(r2, 'b', 'B').out, 'b')[0].race, null);
+});
+
+test('race: close(id, now) that ends the race keeps the result for the usual time', () => {
+  const r = running(2); lapTo(r, 'p0', RACE_CHECKPOINTS, 20_000); fin(r, 'p0', 25_000, 46_000);
+  r.close('p1', 47_000);
+  assert.equal(r.race.state, 'done'); assert.equal(r.race.endedAt, 47_000); assert.equal(r.due(), 47_000 + RACE_KEEP_MS);
+});
+
+test('race: dead heats are measured from the first of the group, so a chain does not creep', () => {
+  const r = running(3);
+  for (const id of ['p0', 'p1', 'p2']) lapTo(r, id, RACE_CHECKPOINTS, 20_000);
+  fin(r, 'p0', 25_000, 45_000); fin(r, 'p1', 25_000, 45_090); fin(r, 'p2', 25_000, 45_180);
+  assert.deepEqual(r.order().map(o => [o.id, o.pos]), [['p0', 1], ['p1', 1], ['p2', 3]]);
 });

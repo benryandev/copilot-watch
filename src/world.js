@@ -2,7 +2,7 @@
 // Pure logic, no Cloudflare types; the Durable Object shell in world-worker.js wires it to websockets.
 import { cleanName } from './race.js';
 
-export const WORLD_VERSION = '2026-11-02.1'; // bumped on deploy so /presence shows which code the room runs
+export const WORLD_VERSION = '2026-11-02.2'; // bumped on deploy so /presence shows which code the room runs
 export const WORLD_OFF_KEY = 'world:off'; // any value under this KV key pauses new connections and closes live ones
 export const WORLD_OFF_TTL_MS = 30_000; // how long the room trusts its last read of the kill switch
 
@@ -94,6 +94,8 @@ export const RACE_GO_LEAD_MS = 3_000; // race.go goes out this long before start
 export const RACE_CLOSE_MS = 60_000; // the race closes this long after the first finisher
 export const RACE_DEAD_HEAT_MS = 100; // finishes closer than this share a position
 export const RACE_KEEP_MS = 300_000; // a finished race is kept this long for the sheets
+export const RACE_MAX_RUN_MS = 300_000; // a race nobody finishes ends on its own this long after the start
+export const RACE_MSG_MAX_HZ = 2; // race.open/join/leave per second per socket
 export const RACE_CHECKPOINTS = 5; // realfi-v1
 
 export const COLOURS = ['#22d3ee', '#facc15', '#ec4899', '#3b82f6', '#f97316', '#a78bfa', '#0fb89c', '#94a3b8'];
@@ -134,7 +136,7 @@ export class Room {
     if (this.blocked('s:' + id, now) || this.blocked('i:' + ipKey, now)) return { ok: false, error: 'blocked' };
     if ([...this.players.values()].filter(p => p.ipKey === ipKey).length >= WORLD_IP_MAX) return { ok: false, error: 'ip' };
     if (this.players.size >= WORLD_MAX) return { ok: false, error: 'full' };
-    this.players.set(id, { id, ipKey, since: now, joined: false, name: null, colour: null, pose: null, times: [], pings: [], dropped: [], lastJump: -Infinity, bad: 0, renamedAt: -Infinity, lastMsg: now });
+    this.players.set(id, { id, ipKey, since: now, joined: false, name: null, colour: null, pose: null, times: [], pings: [], races: [], dropped: [], lastJump: -Infinity, bad: 0, renamedAt: -Infinity, lastMsg: now });
     return { ok: true };
   }
 
@@ -149,7 +151,7 @@ export class Room {
     for (const e of entries) {
       if (!e?.id) continue;
       // Last heard is what the attachment says (refreshed every 30 s of messages), else when it joined: a wake-up must not make a dead socket look alive
-      this.players.set(e.id, { id: e.id, ipKey: e.ipKey, since: e.since, joined: true, name: e.name, colour: e.colour, pose: null, times: [], pings: [], dropped: [], lastJump: -Infinity, bad: 0, renamedAt: -Infinity, lastMsg: e.heardAt ?? e.since ?? now });
+      this.players.set(e.id, { id: e.id, ipKey: e.ipKey, since: e.since, joined: true, name: e.name, colour: e.colour, pose: null, times: [], pings: [], races: [], dropped: [], lastJump: -Infinity, bad: 0, renamedAt: -Infinity, lastMsg: e.heardAt ?? e.since ?? now });
       this.colourN++;
     }
   }
@@ -182,7 +184,9 @@ export class Room {
       p.colour = COLOURS[this.colourN++ % COLOURS.length];
       p.joined = true; p.bad = 0;
       const peers = this.joined().filter(o => o !== p).map(o => this.peerView(o));
-      return { out: [msg(id, { t: 'ok', id, name: p.name, colour: p.colour, now, peers }),
+      const race = this.race && this.race.state !== 'done' ? { ...this.raceView(), t: undefined, state: this.race.state, order: this.order() } : null;
+      if (race) delete race.t;
+      return { out: [msg(id, { t: 'ok', id, name: p.name, colour: p.colour, now, peers, race }),
         ...this.broadcast({ t: 'join', id, name: p.name, colour: p.colour }, id), ...this.broadcast({ t: 'n', online: this.online() }, id)] };
     }
     if (m.t === 'ping') return over(p.pings, WORLD_PING_MAX_HZ) ? flooded() : { out: [msg(id, { t: 'pong', now, echo: m.echo })] };
@@ -209,9 +213,11 @@ export class Room {
       const named = pick.reason ? { t: 'named', name: p.name, reason: pick.reason, asked } : { t: 'named', name: p.name };
       return { out: [msg(id, named), ...this.broadcast({ t: 'rename', id, name: p.name }, id)] };
     }
-    if (m.t === 'race.open') { p.bad = 0; return this.openRace(id, now); }
-    if (m.t === 'race.join') { p.bad = 0; return this.joinRace(id, now); }
-    if (m.t === 'race.leave') { p.bad = 0; return this.leaveRace(id, now); }
+    if (m.t === 'race.open' || m.t === 'race.join' || m.t === 'race.leave') {
+      p.bad = 0;
+      if (over(p.races, RACE_MSG_MAX_HZ)) return flooded(); // each one fans out to the whole room
+      return m.t === 'race.open' ? this.openRace(id, now) : m.t === 'race.join' ? this.joinRace(id, now) : this.leaveRace(id, now);
+    }
     if (m.t === 'race.cp' || m.t === 'race.fin') {
       const res = m.t === 'race.cp' ? this.checkpoint(id, m.i, now) : this.finish(id, m.ms, now);
       if (res === 'bad') return bad();
@@ -253,6 +259,7 @@ export class Room {
     if (!r || !r.entrants.has(id)) return { out: [] };
     if (r.state === 'open' || r.state === 'countdown') {
       r.entrants.delete(id);
+      if (r.state === 'countdown' && r.entrants.size === 0) { this.race = null; return { out: this.broadcast({ t: 'race.cancel', id: r.id, why: 'Nobody left' }), raceChanged: true }; }
       return { out: this.broadcast({ t: 'race.grid', id: r.id, grid: this.grid() }), raceChanged: true };
     }
     const e = r.entrants.get(id);
@@ -265,7 +272,16 @@ export class Room {
   }
   /** The race as plain data for the shell to persist (entrants as pairs), and back. */
   raceState() { const r = this.race; return r ? { ...r, entrants: [...r.entrants] } : null; }
-  restoreRace(st) { this.race = st && typeof st === 'object' && Array.isArray(st.entrants) ? { ...st, entrants: new Map(st.entrants) } : null; }
+  restoreRace(st, now = Date.now()) {
+    this.race = st && typeof st === 'object' && Array.isArray(st.entrants) ? { ...st, entrants: new Map(st.entrants) } : null;
+    const r = this.race;
+    if (!r || r.state === 'done') return { out: [] };
+    // After a restart nobody keeps their socket id: entrants who have not come back are out of the race
+    for (const [id, e] of r.entrants) if (!this.players.get(id)?.joined) { if (r.state === 'running') e.dnf = true; else r.entrants.delete(id); }
+    if (r.state === 'running' && [...r.entrants.values()].every(e => e.fin || e.dnf)) return { out: this.endRace(now) };
+    if (r.state !== 'running' && r.entrants.size === 0) { this.race = null; return { out: [] }; }
+    return { out: [] };
+  }
 
   /** When the shell's alarm should next call timers(): the go/cancel moment, the start, the close after the first
    * finisher, or when a done race is forgotten. */
@@ -274,7 +290,7 @@ export class Room {
     if (!r) return null;
     if (r.state === 'open') return r.startsAt - RACE_GO_LEAD_MS;
     if (r.state === 'countdown') return r.startsAt;
-    if (r.state === 'running') return r.firstFinAt == null ? null : r.firstFinAt + RACE_CLOSE_MS;
+    if (r.state === 'running') return Math.min(r.startsAt + RACE_MAX_RUN_MS, r.firstFinAt == null ? Infinity : r.firstFinAt + RACE_CLOSE_MS);
     return r.endedAt + RACE_KEEP_MS;
   }
   /** Run every timer due by `now`. A field of one is cancelled when its countdown would have started. */
@@ -288,7 +304,10 @@ export class Room {
       if (r.state === 'open') {
         if (r.entrants.size < 2) { out.push(...this.broadcast({ t: 'race.cancel', id: r.id, why: 'Nobody joined' })); this.race = null; }
         else { r.state = 'countdown'; out.push(...this.broadcast({ t: 'race.go', id: r.id, startsAt: r.startsAt })); }
-      } else if (r.state === 'countdown') r.state = 'running';
+      } else if (r.state === 'countdown') {
+        if (r.entrants.size === 0) { out.push(...this.broadcast({ t: 'race.cancel', id: r.id, why: 'Nobody left' })); this.race = null; }
+        else r.state = 'running';
+      }
       else if (r.state === 'running') out.push(...this.endRace(now));
       else this.race = null;
     }
@@ -329,7 +348,11 @@ export class Room {
     if (!r) return [];
     const rows = [...r.entrants].map(([id, e]) => ({ id, name: this.players.get(id)?.name ?? e.name, cp: e.cps.length, at: e.fin ? e.fin.at : (e.cps.at(-1) ?? null), ms: e.fin?.ms ?? null, fin: !!e.fin, dnf: e.dnf, slot: e.slot }));
     rows.sort((a, b) => (a.dnf - b.dnf) || (b.fin - a.fin) || (a.fin ? a.at - b.at : (b.cp - a.cp) || ((a.at ?? Infinity) - (b.at ?? Infinity)) || (a.slot - b.slot)));
-    rows.forEach((x, i) => { x.pos = i > 0 && x.fin && rows[i - 1].fin && x.at - rows[i - 1].at <= RACE_DEAD_HEAT_MS ? rows[i - 1].pos : i + 1; });
+    let lead = null; // the first finisher of the current dead-heat group
+    rows.forEach((x, i) => {
+      if (x.fin && lead && x.at - lead.at <= RACE_DEAD_HEAT_MS) x.pos = lead.pos;
+      else { x.pos = i + 1; lead = x.fin ? x : null; }
+    });
     return rows.map(({ slot, ...x }) => x);
   }
 
@@ -343,10 +366,10 @@ export class Room {
   }
 
   /** A socket went away. */
-  close(id) {
+  close(id, now = Date.now()) {
     const p = this.players.get(id);
     if (!p) return { out: [] };
-    const race = p.joined ? this.leaveRace(id) : { out: [] }; // off the grid, or a DNF, before the roster forgets them
+    const race = p.joined ? this.leaveRace(id, now) : { out: [] }; // off the grid, or a DNF, before the roster forgets them
     this.players.delete(id);
     this.dirty.delete(id);
     if (!p.joined) return { out: [] };
@@ -357,7 +380,7 @@ export class Room {
   reap(now) {
     const dead = [...this.players.values()].filter(p => now - p.lastMsg > WORLD_IDLE_MS).map(p => p.id);
     const out = [];
-    for (const id of dead) out.push(...this.close(id).out);
+    for (const id of dead) out.push(...this.close(id, now).out);
     return { closed: dead, out };
   }
 
