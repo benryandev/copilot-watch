@@ -411,3 +411,15 @@ test('race: 60 s after the first finisher the race ends with the rest DNF; a lea
   // a new race can start once this one is done
   assert.equal(raceMsg(r, 'p2', { t: 'race.open' }, 200_000).out.filter(([, m]) => m.t === 'race.open').length, 3);
 });
+
+test('race: raceState() round-trips through restoreRace() with entrants, slots, checkpoints and timers intact', () => {
+  const r = running(3);
+  lapTo(r, 'p1', 2, 20_000); fin(r, 'p0', 1, 1); // p0's fin is ignored (no cps); p1 has two checkpoints
+  const snap = JSON.parse(JSON.stringify(r.raceState()));
+  const r2 = room(); for (let i = 0; i < 3; i++) hi(r2, 'p' + i, 'P' + i);
+  r2.restoreRace(snap);
+  assert.equal(r2.race.id, r.race.id); assert.equal(r2.race.state, 'running'); assert.equal(r2.race.startsAt, 20_000);
+  assert.deepEqual(r2.grid(), r.grid()); assert.deepEqual(r2.order(), r.order()); assert.equal(r2.due(), r.due());
+  assert.deepEqual(cp(r2, 'p1', 3, 30_000).out.length, 3, 'the restored race takes the next checkpoint');
+  assert.equal(room().raceState(), null); const r3 = room(); r3.restoreRace(null); assert.equal(r3.race, null);
+});

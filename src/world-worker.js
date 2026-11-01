@@ -40,6 +40,13 @@ export default {
   },
 };
 
+/** The one alarm serves two clocks: the idle reaper and the race timers. The earlier wins; null when neither is due. */
+export function nextAlarm(reaperDue, raceDue) {
+  if (reaperDue == null) return raceDue ?? null;
+  if (raceDue == null) return reaperDue;
+  return Math.min(reaperDue, raceDue);
+}
+
 const enc = new TextEncoder();
 async function ipKeyOf(ip, salt) {
   const d = await crypto.subtle.digest('SHA-256', enc.encode(`${salt}|${ip}`));
@@ -68,24 +75,38 @@ export class World {
         else if (this.room.open(a.id, { ipKey: a.ipKey }, now).ok) this.room.players.get(a.id).lastMsg = a.since ?? now; // never said hi: ages from when it arrived
       }
       this.room.restore(joined, now);
-      if (this.sockets.size) await this.armReaper();
+      this.room.restoreRace(await ctx.storage.get('race')); // a live race survives eviction
+      await this.armAlarm();
     });
   }
 
-  /** One alarm a minute while anyone is connected: it drops sockets that have gone silent (see Room.reap). */
-  async armReaper() {
-    if (this.reaperArmed) return;
-    this.reaperArmed = true;
-    await this.ctx.storage.setAlarm(Date.now() + WORLD_IDLE_MS);
+  /** One alarm for two jobs: the idle reaper (a minute out while anyone is connected) and the race timers. An
+   * existing earlier alarm is left alone; a later one is pulled in. */
+  async armAlarm() {
+    const due = nextAlarm(this.sockets.size ? Date.now() + WORLD_IDLE_MS : null, this.room.due());
+    if (due == null) return;
+    if (this.alarmAt != null && this.alarmAt > Date.now() && this.alarmAt <= due) return; // an earlier one is already set
+    this.alarmAt = due;
+    await this.ctx.storage.setAlarm(due);
+  }
+
+  /** The race changed: keep storage and the alarm in step. */
+  async raceChanged() {
+    await this.ctx.storage.put('race', this.room.raceState());
+    await this.armAlarm();
   }
 
   async alarm() {
     await this.ready;
-    this.reaperArmed = false;
-    const k = this.room.reap(Date.now());
+    this.alarmAt = null; // it just fired
+    const now = Date.now();
+    const k = this.room.reap(now);
     this.deliver(k.out);
     for (const id of k.closed) { try { this.sockets.get(id)?.close(1001, 'idle'); } catch { /* gone */ } this.sockets.delete(id); }
-    if (this.sockets.size) await this.armReaper();
+    const t = this.room.timers(now);
+    this.deliver(t.out);
+    if (t.raceChanged || k.closed.length) await this.ctx.storage.put('race', this.room.raceState());
+    await this.armAlarm();
   }
 
   deliver(out) {
@@ -115,7 +136,7 @@ export class World {
       this.ctx.acceptWebSocket(server);
       server.serializeAttachment({ id, ipKey, since: now });
       this.sockets.set(id, server);
-      await this.armReaper();
+      await this.armAlarm();
       return new Response(null, { status: 101, webSocket: client });
     }
     if (pathname === '/presence') return json({ online: this.room.online(), version: WORLD_VERSION }, 200, '');
@@ -126,6 +147,7 @@ export class World {
       const k = this.room.kick({ id: body.id, name: body.name }, body.minutes, now);
       await this.ctx.storage.put('blocks', k.blocks);
       this.deliver(k.out);
+      await this.raceChanged();
       for (const id of k.closed) { try { this.sockets.get(id)?.close(1008, 'kicked'); } catch { /* gone */ } this.sockets.delete(id); }
       return json({ closed: k.closed, until: k.closed.length ? k.blocks['s:' + k.closed[0]] : null }, 200, '');
     }
@@ -159,15 +181,18 @@ export class World {
     // Stored on first hi, on every rename, and every 30 s of messages (so the last-heard time survives hibernation)
     if (a && (cur?.name !== a.name || a.heardAt - (cur?.heardAt ?? 0) > 30_000)) ws.serializeAttachment(a);
     if (res.flushIn) this.flushLater(res.flushIn);
-    if (res.close) { this.deliver(this.room.close(id).out); this.sockets.delete(id); ws.close(1008, res.close); }
+    if (res.close) { const c = this.room.close(id); this.deliver(c.out); this.sockets.delete(id); ws.close(1008, res.close); if (c.raceChanged) await this.raceChanged(); }
+    if (res.raceChanged) await this.raceChanged();
   }
 
   /** The kill switch is on: close every socket; the worker refuses new ones until the key is gone. */
   pauseAll() {
     for (const [id, ws] of this.sockets) { this.room.close(id); try { ws.close(1001, 'paused'); } catch { /* gone */ } }
     this.sockets.clear();
+    this.room.restoreRace(null);
+    this.ctx.storage.put('race', null).catch(() => {});
   }
 
-  async webSocketClose(ws) { await this.ready; const id = this.idOf(ws); if (id) { this.deliver(this.room.close(id).out); this.sockets.delete(id); } }
+  async webSocketClose(ws) { await this.ready; const id = this.idOf(ws); if (id) { const c = this.room.close(id); this.deliver(c.out); this.sockets.delete(id); if (c.raceChanged) await this.raceChanged(); } }
   async webSocketError(ws) { return this.webSocketClose(ws); }
 }

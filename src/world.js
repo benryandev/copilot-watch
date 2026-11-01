@@ -2,7 +2,7 @@
 // Pure logic, no Cloudflare types; the Durable Object shell in world-worker.js wires it to websockets.
 import { cleanName } from './race.js';
 
-export const WORLD_VERSION = '2026-11-01.1'; // bumped on deploy so /presence shows which code the room runs
+export const WORLD_VERSION = '2026-11-02.1'; // bumped on deploy so /presence shows which code the room runs
 export const WORLD_OFF_KEY = 'world:off'; // any value under this KV key pauses new connections and closes live ones
 export const WORLD_OFF_TTL_MS = 30_000; // how long the room trusts its last read of the kill switch
 
@@ -263,6 +263,10 @@ export class Room {
     }
     return { out: [] };
   }
+  /** The race as plain data for the shell to persist (entrants as pairs), and back. */
+  raceState() { const r = this.race; return r ? { ...r, entrants: [...r.entrants] } : null; }
+  restoreRace(st) { this.race = st && typeof st === 'object' && Array.isArray(st.entrants) ? { ...st, entrants: new Map(st.entrants) } : null; }
+
   /** When the shell's alarm should next call timers(): the go/cancel moment, the start, the close after the first
    * finisher, or when a done race is forgotten. */
   due() {

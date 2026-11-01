@@ -115,3 +115,9 @@ test('announce needs the admin header, POST only, and is forwarded to the room',
   assert.equal((await handler.fetch(req('/announce', { method: 'GET', headers: { [RACE_ADMIN_HEADER]: 'admin-1' } }), e)).status, 404);
   assert.equal((await (await handler.fetch(req('/announce', { method: 'POST', body: '{"t":"record"}', headers: { [RACE_ADMIN_HEADER]: 'admin-1' } }), e)).json()).forwarded, '/announce');
 });
+
+test('nextAlarm: the earlier of the reaper and the race, either alone, none when neither', async () => {
+  const { nextAlarm } = await import('../src/world-worker.js');
+  assert.equal(nextAlarm(1000, 500), 500); assert.equal(nextAlarm(1000, 5000), 1000);
+  assert.equal(nextAlarm(null, 700), 700); assert.equal(nextAlarm(900, null), 900); assert.equal(nextAlarm(null, null), null);
+});
