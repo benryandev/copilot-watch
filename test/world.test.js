@@ -1,5 +1,5 @@
 import test from 'node:test'; import assert from 'node:assert/strict';
-import { pickName, isReserved, RESERVED, parsePose, WORLD_RADIUS, WORLD_MAX_SPEED, WORLD_FRAME_MAX, Room, WORLD_MAX, WORLD_IP_MAX, COLOURS, offChecker, WORLD_FLOOD_BLOCK_MS, WORLD_IDLE_MS } from '../src/world.js';
+import { pickName, isReserved, RESERVED, parsePose, WORLD_RADIUS, WORLD_MAX_SPEED, WORLD_FRAME_MAX, Room, WORLD_MAX, WORLD_IP_MAX, COLOURS, offChecker, WORLD_FLOOD_BLOCK_MS, WORLD_IDLE_MS, RACE_JOIN_MS, RACE_GRID } from '../src/world.js';
 
 test('pickName: clean names pass, reserved and rude fall back, owner may be Ben', () => {
   assert.deepEqual(pickName('Aveli'), { name: 'Aveli', fallback: false });
@@ -285,4 +285,58 @@ test('room: announce broadcasts a record to everyone joined; bad payloads are re
   for (const bad of [null, {}, { t: 'record', name: '', ms: 1 }, { t: 'record', name: 'x', ms: -1 }, { t: 'record', name: 'x'.repeat(21), ms: 1 }, { t: 'nope', name: 'x', ms: 1 }]) {
     const b = r.announce(bad); assert.equal(b.ok, false, JSON.stringify(bad)); assert.equal(b.out.length, 0);
   }
+});
+
+// ---- stage two: live races ----
+const raceMsg = (r, id, m, now) => r.onMessage(id, JSON.stringify(m), now);
+
+test('race: open creates a race with the host in slot 1 and tells everyone; a second open while open joins instead', () => {
+  const r = room(); hi(r, 'a', 'A'); hi(r, 'b', 'B'); hi(r, 'c', 'C');
+  const { out } = raceMsg(r, 'a', { t: 'race.open' }, 1000);
+  const o = to(out, 'b').find(m => m.t === 'race.open');
+  assert.ok(o); assert.equal(o.host, 'a'); assert.equal(o.name, 'A'); assert.equal(o.startsAt, 1000 + RACE_JOIN_MS);
+  assert.deepEqual(o.grid, [{ id: 'a', name: 'A', slot: 1 }]);
+  assert.deepEqual(to(out, 'a').map(m => m.t), ['race.open']); assert.deepEqual(to(out, 'c').map(m => m.t), ['race.open']);
+  assert.equal(r.race.state, 'open'); assert.equal(o.id, r.race.id); assert.equal(typeof r.race.id, 'string');
+  const j = raceMsg(r, 'b', { t: 'race.open' }, 1500);
+  const g = to(j.out, 'c').find(m => m.t === 'race.grid');
+  assert.deepEqual(g.grid.map(x => [x.id, x.slot]), [['a', 1], ['b', 2]]);
+  assert.equal(r.race.state, 'open');
+});
+
+test('race: join fills slots in order, the ninth is told race_full and can watch; joining twice is nothing', () => {
+  const r = room(); for (let i = 0; i < 10; i++) hi(r, 'p' + i, 'P' + i);
+  raceMsg(r, 'p0', { t: 'race.open' }, 0);
+  for (let i = 1; i < RACE_GRID; i++) raceMsg(r, 'p' + i, { t: 'race.join' }, i);
+  assert.equal(r.grid().length, RACE_GRID); assert.equal(r.grid()[7].slot, 8);
+  const { out } = raceMsg(r, 'p8', { t: 'race.join' }, 20);
+  assert.deepEqual(out, [['p8', { t: 'err', error: 'race_full' }]]);
+  assert.equal(raceMsg(r, 'p1', { t: 'race.join' }, 21).out.length, 0);
+});
+
+test('race: leave before Go frees the slot, later slots keep their numbers, the host leaving keeps the race open', () => {
+  const r = room(); hi(r, 'a', 'A'); hi(r, 'b', 'B'); hi(r, 'c', 'C');
+  raceMsg(r, 'a', { t: 'race.open' }, 0); raceMsg(r, 'b', { t: 'race.join' }, 1); raceMsg(r, 'c', { t: 'race.join' }, 2);
+  const { out } = raceMsg(r, 'b', { t: 'race.leave' }, 3);
+  assert.deepEqual(to(out, 'a').find(m => m.t === 'race.grid').grid.map(x => [x.id, x.slot]), [['a', 1], ['c', 3]]);
+  hi(r, 'd', 'D'); raceMsg(r, 'd', { t: 'race.join' }, 4);
+  assert.deepEqual(r.grid().map(x => [x.id, x.slot]), [['a', 1], ['d', 2], ['c', 3]]);
+  raceMsg(r, 'a', { t: 'race.leave' }, 5);
+  assert.equal(r.race.state, 'open'); assert.deepEqual(r.grid().map(x => x.id), ['d', 'c']);
+  assert.equal(raceMsg(r, 'b', { t: 'race.leave' }, 6).out.length, 0);
+});
+
+test('race: close(id) of an entrant before Go drops them from the grid and broadcasts race.grid', () => {
+  const r = room(); hi(r, 'a', 'A'); hi(r, 'b', 'B'); hi(r, 'c', 'C');
+  raceMsg(r, 'a', { t: 'race.open' }, 0); raceMsg(r, 'b', { t: 'race.join' }, 1);
+  const { out } = r.close('b');
+  assert.ok(to(out, 'c').some(m => m.t === 'race.grid' && m.grid.length === 1));
+  assert.ok(to(out, 'c').some(m => m.t === 'leave'));
+  assert.equal(r.grid().length, 1);
+});
+
+test('race: open or join before hi is bad; join with no race is race_none', () => {
+  const r = room(); r.open('x', { ipKey: 'kx' }, 0); hi(r, 'a', 'A');
+  assert.deepEqual(raceMsg(r, 'x', { t: 'race.open' }, 1), { out: [] });
+  assert.deepEqual(raceMsg(r, 'a', { t: 'race.join' }, 2).out, [['a', { t: 'err', error: 'race_none' }]]);
 });

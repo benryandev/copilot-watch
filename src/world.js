@@ -87,6 +87,15 @@ export const WORLD_FLOOD_WINDOW_MS = 10_000;
 export const WORLD_FLOOD_BLOCK_MS = 60_000; // a flooder's address is refused for this long
 export const WORLD_IDLE_MS = 60_000; // nothing heard for this long (the client beats once a second): the socket is dead, drop it
 // District colours from the map (content.js), minus the player's own hub green, so your car is always the green one.
+// ── Live races (stage two) ──
+export const RACE_JOIN_MS = 20_000; // from Race pressed to the grid
+export const RACE_GRID = 8; // cars on the grid
+export const RACE_GO_LEAD_MS = 3_000; // race.go goes out this long before startsAt (the 3-2-1)
+export const RACE_CLOSE_MS = 60_000; // the race closes this long after the first finisher
+export const RACE_DEAD_HEAT_MS = 100; // finishes closer than this share a position
+export const RACE_KEEP_MS = 300_000; // a finished race is kept this long for the sheets
+export const RACE_CHECKPOINTS = 5; // realfi-v1
+
 export const COLOURS = ['#22d3ee', '#facc15', '#ec4899', '#3b82f6', '#f97316', '#a78bfa', '#0fb89c', '#94a3b8'];
 
 const msg = (to, m) => [to, m];
@@ -103,6 +112,7 @@ export class Room {
     this.driverN = 0;
     this.lastSnap = -Infinity;
     this.dirty = new Set();
+    this.race = null; // the live race, if any (see openRace)
   }
 
   /** What a presented token permits: {owner} for Ben's, {allow} for a guest's, nothing otherwise. */
@@ -199,7 +209,54 @@ export class Room {
       const named = pick.reason ? { t: 'named', name: p.name, reason: pick.reason, asked } : { t: 'named', name: p.name };
       return { out: [msg(id, named), ...this.broadcast({ t: 'rename', id, name: p.name }, id)] };
     }
+    if (m.t === 'race.open') { p.bad = 0; return this.openRace(id, now); }
+    if (m.t === 'race.join') { p.bad = 0; return this.joinRace(id, now); }
+    if (m.t === 'race.leave') { p.bad = 0; return this.leaveRace(id, now); }
     return bad();
+  }
+
+  // ── Live races: one at a time, in memory (the shell persists it) ──
+  /** The grid in slot order, names as the room knows them now. */
+  grid() {
+    if (!this.race) return [];
+    return [...this.race.entrants].map(([id, e]) => ({ id, name: this.players.get(id)?.name ?? e.name, slot: e.slot })).sort((a, b) => a.slot - b.slot);
+  }
+  raceView() { const r = this.race; return { t: 'race.open', id: r.id, host: r.host, name: r.hostName, startsAt: r.startsAt, grid: this.grid() }; }
+  /** Race pressed: a new race with this player in slot 1, or a join if one is open. */
+  openRace(id, now) {
+    const p = this.players.get(id);
+    if (this.race && this.race.state === 'open') return this.joinRace(id, now);
+    if (this.race && this.race.state !== 'done') return { out: [msg(id, { t: 'err', error: 'race_running' })] };
+    this.race = { id: crypto.randomUUID().slice(0, 8), host: id, hostName: p.name, state: 'open', openedAt: now, startsAt: now + RACE_JOIN_MS, entrants: new Map([[id, { slot: 1, name: p.name, cps: [], fin: null, dnf: false }]]), firstFinAt: null, endedAt: null };
+    return { out: this.broadcast(this.raceView()), raceChanged: true };
+  }
+  joinRace(id) {
+    const r = this.race, p = this.players.get(id);
+    if (!r || r.state === 'done') return { out: [msg(id, { t: 'err', error: 'race_none' })] };
+    if (r.state !== 'open') return { out: [msg(id, { t: 'err', error: 'race_running' })] };
+    if (r.entrants.has(id)) return { out: [] };
+    const used = new Set([...r.entrants.values()].map(e => e.slot));
+    let slot = 1; while (used.has(slot)) slot++;
+    if (slot > RACE_GRID) return { out: [msg(id, { t: 'err', error: 'race_full' })] };
+    r.entrants.set(id, { slot, name: p.name, cps: [], fin: null, dnf: false });
+    return { out: this.broadcast({ t: 'race.grid', id: r.id, grid: this.grid() }), raceChanged: true };
+  }
+  /** Off the grid before Go (the slot is freed); a DNF once running. */
+  leaveRace(id) {
+    const r = this.race;
+    if (!r || !r.entrants.has(id)) return { out: [] };
+    if (r.state === 'open' || r.state === 'countdown') {
+      r.entrants.delete(id);
+      return { out: this.broadcast({ t: 'race.grid', id: r.id, grid: this.grid() }), raceChanged: true };
+    }
+    const e = r.entrants.get(id);
+    if (r.state === 'running' && !e.fin && !e.dnf) { e.dnf = true; return { out: this.broadcast({ t: 'race.pos', id: r.id, order: this.order() }), raceChanged: true }; }
+    return { out: [] };
+  }
+  /** Running order: refined in the timers/checkpoint work; for now, slot order with checkpoint counts. */
+  order() {
+    if (!this.race) return [];
+    return this.grid().map(g => { const e = this.race.entrants.get(g.id); return { id: g.id, name: g.name, cp: e.cps.length, at: e.cps.at(-1) ?? null, ms: e.fin?.ms ?? null, dnf: e.dnf }; });
   }
 
   /** Send the held snapshot (movers since the last one) to everyone. */
@@ -215,10 +272,11 @@ export class Room {
   close(id) {
     const p = this.players.get(id);
     if (!p) return { out: [] };
+    const race = p.joined ? this.leaveRace(id) : { out: [] }; // off the grid, or a DNF, before the roster forgets them
     this.players.delete(id);
     this.dirty.delete(id);
     if (!p.joined) return { out: [] };
-    return { out: [...this.broadcast({ t: 'leave', id }), ...this.broadcast({ t: 'n', online: this.online() })] };
+    return { out: [...race.out.filter(([to]) => to !== id), ...this.broadcast({ t: 'leave', id }), ...this.broadcast({ t: 'n', online: this.online() })], raceChanged: !!race.raceChanged };
   }
 
   /** Drop sockets nothing has been heard from for WORLD_IDLE_MS: browsers killed without a close frame. The shell closes them. */
