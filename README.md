@@ -99,6 +99,18 @@ curl -X DELETE 'https://copilot-watch.benryan.workers.dev/race/time?track=realfi
 
 No `wrangler.toml` change is needed: it uses the existing `KV` binding.
 
+## Arcade boards
+
+Score boards for the arcade cabinets in the ecosystem world (first cabinet: Flappy Coin by IBuyTheTop, 1 Nov 2026). Same origin rules, name checks, rate limit shape and admin header as the race board; `src/arcade.js`.
+
+| Route | What |
+|---|---|
+| `GET /arcade/top?game=flappy-coin` | `{game, top: [{name, score, level, won, at}]}`, the best ten. With the admin header: `all` (every row, with ids and the run's `ms`). |
+| `POST /arcade/score` | Body `{game, name, score, level, won, ms}`; `ms` is the run's play time. `{ok, rank, best, top}`. One row per name and per address, each keeping its best. |
+| `DELETE /arcade/score` | Admin only. Removes by `id` or `name` from `game` (JSON body or query string). `{ok, removed}`. |
+
+A score is only a number, so the checks are about pace, not proof: `score ≤ 40 × seconds`, `ms ≥ 6 s × (level − 1)`, `score ≥ 80 × (level − 1)`, level 1 to 10, `won` only on level 10, score at most 2600, run under 30 minutes. One post per IP every 10 s, valid or not. Top 100 kept per game in `arcade:top:<game>`.
+
 ## Project submissions
 
 The form at `https://strike.benryan.com.au/ecosystem/submit/` posts here (`src/submit.js`); same CORS origins as the race board.

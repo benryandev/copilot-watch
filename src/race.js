@@ -171,12 +171,12 @@ export async function removeTime(kv, track, { id, name } = {}) {
 
 // ---- HTTP ----
 
-const cors = origin => (RACE_ORIGINS.includes(origin)
+export const cors = origin => (RACE_ORIGINS.includes(origin)
   ? { 'access-control-allow-origin': origin, vary: 'Origin', 'access-control-allow-methods': 'GET, POST, OPTIONS', 'access-control-allow-headers': 'content-type', 'access-control-max-age': '600' }
   : { vary: 'Origin' });
-const json = (v, status, origin, extra = {}) => new Response(JSON.stringify(v), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store', ...cors(origin), ...extra } });
+export const json = (v, status, origin, extra = {}) => new Response(JSON.stringify(v), { status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store', ...cors(origin), ...extra } });
 
-async function hashHex(s) {
+export async function hashHex(s) {
   const h = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s)));
   return [...h.slice(0, 12)].map(b => b.toString(16).padStart(2, '0')).join('');
 }
@@ -211,7 +211,7 @@ export async function getStats(kv, track, days, now = Date.now()) {
   return out;
 }
 
-async function readJson(req) {
+export async function readJson(req) {
   if (Number(req.headers.get('content-length') || 0) > RACE_MAX_BODY) return { error: 'too_large', status: 413 };
   const buf = await req.arrayBuffer();
   if (buf.byteLength > RACE_MAX_BODY) return { error: 'too_large', status: 413 };
@@ -219,7 +219,7 @@ async function readJson(req) {
   try { return { body: JSON.parse(new TextDecoder().decode(buf)) }; } catch { return { error: 'bad_json', status: 400 }; }
 }
 
-const isAdmin = (req, env) => !!env.RACE_ADMIN_TOKEN && safeEqual(req.headers.get(RACE_ADMIN_HEADER), env.RACE_ADMIN_TOKEN);
+export const isAdmin = (req, env) => !!env.RACE_ADMIN_TOKEN && safeEqual(req.headers.get(RACE_ADMIN_HEADER), env.RACE_ADMIN_TOKEN);
 
 /** Routes under /race/. */
 /** Tell the world room about a new #1 (fireworks for everyone there). Best effort: never delays or fails the post. */
