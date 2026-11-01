@@ -2,7 +2,7 @@
 // Pure logic, no Cloudflare types; the Durable Object shell in world-worker.js wires it to websockets.
 import { cleanName } from './race.js';
 
-export const WORLD_VERSION = '2026-10-31.8'; // bumped on deploy so /presence shows which code the room runs
+export const WORLD_VERSION = '2026-11-01.1'; // bumped on deploy so /presence shows which code the room runs
 export const WORLD_OFF_KEY = 'world:off'; // any value under this KV key pauses new connections and closes live ones
 export const WORLD_OFF_TTL_MS = 30_000; // how long the room trusts its last read of the kill switch
 
@@ -227,6 +227,15 @@ export class Room {
     const out = [];
     for (const id of dead) out.push(...this.close(id).out);
     return { closed: dead, out };
+  }
+
+  /** An announcement from the race worker (a new #1 lap): everyone joined hears it, for the fireworks. */
+  announce(m) {
+    if (!m || typeof m !== 'object' || m.t !== 'record') return { ok: false, out: [] };
+    const name = typeof m.name === 'string' ? m.name.trim() : '';
+    const ms = Number(m.ms), track = typeof m.track === 'string' ? m.track.slice(0, 40) : '';
+    if (!name || name.length > 20 || !Number.isFinite(ms) || ms <= 0) return { ok: false, out: [] };
+    return { ok: true, out: this.broadcast({ t: 'record', name, ms: Math.round(ms), track }) };
   }
 
   /** For the admin: who's here (no addresses). */

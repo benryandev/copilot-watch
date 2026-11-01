@@ -108,3 +108,10 @@ test('World /restart aborts the object so the next request runs the newly deploy
   await new Promise(res => setTimeout(res, 120));
   assert.equal(ctx.aborted, 'restart');
 });
+
+test('announce needs the admin header, POST only, and is forwarded to the room', async () => {
+  const e = env();
+  assert.equal((await handler.fetch(req('/announce', { method: 'POST', body: '{}' }), e)).status, 403);
+  assert.equal((await handler.fetch(req('/announce', { method: 'GET', headers: { [RACE_ADMIN_HEADER]: 'admin-1' } }), e)).status, 404);
+  assert.equal((await (await handler.fetch(req('/announce', { method: 'POST', body: '{"t":"record"}', headers: { [RACE_ADMIN_HEADER]: 'admin-1' } }), e)).json()).forwarded, '/announce');
+});

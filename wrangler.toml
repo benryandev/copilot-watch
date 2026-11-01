@@ -8,6 +8,11 @@ preview_urls = false
 binding = "KV"
 id = "22fd6ef1fa074edea7689bdaa2b5378f"
 
+# The multiplayer room, for telling everyone about a new #1 lap (src/race.js announceRecord)
+[[services]]
+binding = "WORLD"
+service = "copilot-world"
+
 [triggers]
 crons = ["*/2 * * * *", "0 22 * * *"]
 

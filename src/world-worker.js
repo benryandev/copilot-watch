@@ -30,7 +30,7 @@ export default {
       const r = await room(env).fetch(req);
       return new Response(r.body, { status: r.status, headers: { 'content-type': 'application/json', 'cache-control': 'no-store', ...cors(origin) } });
     }
-    if ((pathname === '/who' && req.method === 'GET') || ((pathname === '/kick' || pathname === '/restart') && req.method === 'POST')) {
+    if ((pathname === '/who' && req.method === 'GET') || ((pathname === '/kick' || pathname === '/restart' || pathname === '/announce') && req.method === 'POST')) {
       if (!isAdmin(req, env)) return json({ error: 'forbidden' }, 403, origin);
       return room(env).fetch(req);
     }
@@ -128,6 +128,13 @@ export class World {
       this.deliver(k.out);
       for (const id of k.closed) { try { this.sockets.get(id)?.close(1008, 'kicked'); } catch { /* gone */ } this.sockets.delete(id); }
       return json({ closed: k.closed, until: k.closed.length ? k.blocks['s:' + k.closed[0]] : null }, 200, '');
+    }
+    if (pathname === '/announce') { // from the race worker: a new #1 lap, told to everyone here
+      let body = {};
+      try { body = await req.json(); } catch { /* empty */ }
+      const a = this.room.announce(body);
+      this.deliver(a.out);
+      return json({ ok: a.ok, told: a.out.length }, a.ok ? 200 : 400, '');
     }
     if (pathname === '/restart') {
       // A busy object keeps running the code it started with; abort() resets it and the next request instantiates the new

@@ -13,7 +13,7 @@ export default {
     if (req.method === 'POST' && pathname === '/telegram') return handleTelegram(req, env, ctx);
     if (req.method === 'POST' && pathname === '/discord') return handleDiscord(req, env, ctx);
     if (pathname.startsWith('/api/paper')) return handlePaperApi(req, env);
-    if (pathname.startsWith('/race/')) return handleRaceApi(req, env);
+    if (pathname.startsWith('/race/')) return handleRaceApi(req, env, { waitUntil: p => ctx.waitUntil(p) });
     if (pathname === '/submit' || pathname.startsWith('/submit/')) return handleSubmitApi(req, env);
     if (pathname === '/health') return new Response('ok');
     if (pathname === '/') return new Response('Copilot Watch: Telegram and Discord alerts for Strike copy traders. https://t.me/CopilotWatchBot', { headers: { 'content-type': 'text/plain; charset=utf-8' } });

@@ -344,3 +344,23 @@ test('trace speed check allows for position rounding over a tiny interval', () =
   const leap = [...tr.slice(0, -1), [last[0] - 5, last[1] - 1, last[2] - 0.5, last[3]], last];
   assert.equal(parseTrace(leap, L.ms, T).why, 'speed', 'a 1.1 m step in 5 ms is still impossible');
 });
+
+test('a new #1 is announced to the world room through the WORLD binding; other posts are not; no binding is fine', async () => {
+  const calls = [], waits = [];
+  const WORLD = { fetch: async (url, init) => { calls.push({ url: String(url), init }); return new Response('{"ok":true}'); } };
+  const e = env({ WORLD, RACE_ADMIN_TOKEN: ADMIN });
+  const opts = { waitUntil: p => waits.push(p) };
+  let r = await handleRaceApi(req('POST', '/race/time', { ip: freshIp(), body: good({ name: 'Aveli', ...lap(20) }) }), e, { now: NOW, ...opts });
+  assert.equal((await r.json()).rank, 1);
+  await Promise.all(waits);
+  assert.equal(calls.length, 1);
+  assert.equal(new URL(calls[0].url).pathname, '/announce');
+  assert.equal(calls[0].init.headers[RACE_ADMIN_HEADER], ADMIN);
+  assert.deepEqual(JSON.parse(calls[0].init.body), { t: 'record', track: TRACK, name: 'Aveli', ms: lap(20).ms });
+  r = await handleRaceApi(req('POST', '/race/time', { ip: freshIp(), body: good({ name: 'Rook', ...lap(19) }) }), e, { now: NOW + 20_000, ...opts });
+  assert.equal((await r.json()).rank, 2);
+  await Promise.all(waits);
+  assert.equal(calls.length, 1, 'second place is not announced');
+  r = await handleRaceApi(req('POST', '/race/time', { ip: freshIp(), body: good({ name: 'Juno', ...lap(22) }) }), env(), { now: NOW + 40_000 });
+  assert.equal((await r.json()).rank, 1, 'a post without the binding still succeeds');
+});

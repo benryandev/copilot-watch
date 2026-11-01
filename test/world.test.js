@@ -275,3 +275,14 @@ test('room: a guest token unlocks only the reserved names it was issued for, on 
   assert.equal(pickName('benryanme', { allow: new Set(['benryanme']) }).name, 'benryanme');
   assert.equal(pickName('BenRyan', { allow: new Set(['benryanme']) }).name, 'Driver 01');
 });
+
+test('room: announce broadcasts a record to everyone joined; bad payloads are refused', () => {
+  const r = room(); hi(r, 'a', 'Aveli'); hi(r, 'b', 'Rook'); r.open('c', { ipKey: 'kc' }, 0); // c never said hi
+  const { out, ok } = r.announce({ t: 'record', name: 'BigBaws', ms: 24778.4, track: 'realfi-v1' });
+  assert.equal(ok, true);
+  assert.deepEqual(out.map(([id]) => id).sort(), ['a', 'b']);
+  assert.deepEqual(out[0][1], { t: 'record', name: 'BigBaws', ms: 24778, track: 'realfi-v1' });
+  for (const bad of [null, {}, { t: 'record', name: '', ms: 1 }, { t: 'record', name: 'x', ms: -1 }, { t: 'record', name: 'x'.repeat(21), ms: 1 }, { t: 'nope', name: 'x', ms: 1 }]) {
+    const b = r.announce(bad); assert.equal(b.ok, false, JSON.stringify(bad)); assert.equal(b.out.length, 0);
+  }
+});

@@ -212,7 +212,16 @@ async function readJson(req) {
 const isAdmin = (req, env) => !!env.RACE_ADMIN_TOKEN && safeEqual(req.headers.get(RACE_ADMIN_HEADER), env.RACE_ADMIN_TOKEN);
 
 /** Routes under /race/. */
-export async function handleRaceApi(req, env, { now = Date.now() } = {}) {
+/** Tell the world room about a new #1 (fireworks for everyone there). Best effort: never delays or fails the post. */
+function announceRecord(env, rec, waitUntil) {
+  if (!env.WORLD?.fetch || !env.RACE_ADMIN_TOKEN) return;
+  const job = env.WORLD.fetch('https://copilot-world/announce', {
+    method: 'POST', headers: { 'content-type': 'application/json', [RACE_ADMIN_HEADER]: env.RACE_ADMIN_TOKEN }, body: JSON.stringify({ t: 'record', ...rec }),
+  }).catch(err => console.warn('announce', err?.message));
+  if (waitUntil) waitUntil(job);
+}
+
+export async function handleRaceApi(req, env, { now = Date.now(), waitUntil = null } = {}) {
   const origin = req.headers.get('origin') || '';
   const url = new URL(req.url), kv = env.KV;
   if (req.method === 'OPTIONS') return new Response(null, { status: RACE_ORIGINS.includes(origin) ? 204 : 403, headers: cors(origin) });
@@ -256,6 +265,7 @@ export async function handleRaceApi(req, env, { now = Date.now() } = {}) {
     }
     if (ip !== '?') p.entry.ipk = await hashHex(`race:board:${ip}`); // stored on the row, never sent out
     const { rank, best, rows } = await addTime(kv, p.entry, now);
+    if (rank === 1 && best) announceRecord(env, { track: p.entry.track, name: p.entry.name, ms: p.entry.ms }, waitUntil);
     await countEvent(kv, p.entry.track, 'post', ip, now);
     return json({ ok: true, rank, best, top: pub(rows), ...(p.traceDropped ? { traceDropped: p.traceDropped } : {}) }, 200, origin);
   }
