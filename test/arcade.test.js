@@ -1,6 +1,6 @@
 import test from 'node:test'; import assert from 'node:assert/strict';
-import { handleArcadeApi, parseScore, ARCADE_GAMES, ARCADE_PTS_PER_SEC, ARCADE_LEVEL_MS, ARCADE_LEVEL_PTS, ARCADE_RATE_SEC, ARCADE_KEEP, ARCADE_SHOW } from '../src/arcade.js';
-import { RACE_ORIGINS, RACE_ADMIN_HEADER } from '../src/race.js';
+import { handleArcadeApi, parseScore, ARCADE_GAMES, ARCADE_PTS_PER_SEC, ARCADE_LEVEL_MS, ARCADE_LEVEL_PTS, ARCADE_RATE_SEC, ARCADE_RATE_BURST, ARCADE_ADDR_ROWS, ARCADE_KEEP, ARCADE_SHOW } from '../src/arcade.js';
+import { RACE_ORIGINS, RACE_ADMIN_HEADER, hashHex } from '../src/race.js';
 import handler from '../src/worker.js';
 import { memKV } from './kv-mem.js';
 
@@ -18,7 +18,8 @@ const err = async r => (await r.json()).error;
 
 test('constants are what the plan says', () => {
   assert.equal(ARCADE_PTS_PER_SEC, 40); assert.equal(ARCADE_LEVEL_MS, 6000); assert.equal(ARCADE_LEVEL_PTS, 80);
-  assert.equal(ARCADE_RATE_SEC, 10); assert.equal(ARCADE_KEEP, 100); assert.equal(ARCADE_SHOW, 10);
+  assert.equal(ARCADE_RATE_SEC, 10); assert.equal(ARCADE_RATE_BURST, 5); assert.equal(ARCADE_ADDR_ROWS, 5);
+  assert.equal(ARCADE_KEEP, 100); assert.equal(ARCADE_SHOW, 10);
   assert.equal(G.scoreMax, 2600); assert.equal(G.levelMax, 10); assert.equal(G.maxMs, 30 * 60_000);
 });
 
@@ -75,6 +76,99 @@ test('one row per address: a better score under a new name replaces the old row'
   assert.equal((await top(e)).length, 1);
 });
 
+// ---- devices: people who share one public address (an office on one wifi, 4 Nov 2026) ----
+
+// A device token is 16 random bytes as hex, made once by the page and kept in its storage
+const dev = i => i.toString(16).padStart(32, '0');
+const adminRows = async e => (await (await handleArcadeApi(req('GET', `/arcade/top?game=${GAME}`, { headers: { [RACE_ADMIN_HEADER]: ADMIN } }), env({ KV: e.KV, RACE_ADMIN_TOKEN: ADMIN }))).json()).all;
+
+test('devices: two devices on one address each get a row; the same device lower keeps its row, higher under a new name replaces it', async () => {
+  const e = env(); const ip = '7.7.7.7';
+  let r = await (await post(e, good({ name: 'Tynus', score: 300, device: dev(1) }), { ip, now: NOW })).json();
+  assert.equal(r.rank, 1); assert.equal(r.best, true);
+  // a colleague on the same wifi, another device: their own row
+  r = await (await post(e, good({ name: 'Mara', score: 280, device: dev(2) }), { ip, now: NOW + 20_000 })).json();
+  assert.equal(r.best, true); assert.equal(r.rank, 2);
+  assert.deepEqual(r.top.map(x => x.name), ['Tynus', 'Mara']);
+  // the first device again, lower, a new name: nothing changes; the reply ranks the row it holds
+  r = await (await post(e, good({ name: 'Tynus 2', score: 250, device: dev(1) }), { ip, now: NOW + 40_000 })).json();
+  assert.equal(r.best, false); assert.equal(r.rank, 1);
+  assert.deepEqual(r.top.map(x => x.name), ['Tynus', 'Mara']);
+  // the first device, higher, a new name: its one row is replaced, name and all (the name-variant hole stays closed)
+  r = await (await post(e, good({ name: 'TYNUS!!', score: 400, level: 5, ms: 60_000, device: dev(1) }), { ip, now: NOW + 60_000 })).json();
+  assert.equal(r.best, true);
+  assert.deepEqual(r.top.map(x => [x.name, x.score]), [['TYNUS!!', 400], ['Mara', 280]]);
+  // the hashes never leave the worker, and neither the token nor the address lands in KV as given
+  for (const row of r.top) assert.deepEqual(Object.keys(row).sort(), ['at', 'level', 'name', 'score', 'won']);
+  for (const row of await adminRows(e)) assert.ok(!('ipk' in row) && !('ak' in row) && !('key' in row));
+  const stored = [...e.KV.m.keys(), ...e.KV.m.values()].map(x => JSON.stringify(x)).join('\n');
+  assert.ok(!stored.includes(dev(1)) && !stored.includes(dev(2)) && !stored.includes(ip));
+});
+
+test('devices: one name stays one row, whether the same device or two devices on one address post it', async () => {
+  const e = env(); const ip = '7.7.7.8';
+  await post(e, good({ name: 'Office', score: 300, device: dev(1) }), { ip, now: NOW });
+  const r = await (await post(e, good({ name: 'office', score: 500, level: 6, ms: 70_000, device: dev(2) }), { ip, now: NOW + 20_000 })).json();
+  assert.equal(r.best, true); assert.equal(r.rank, 1);
+  assert.deepEqual(r.top.map(x => [x.name, x.score]), [['office', 500]]);
+  // lower under the same name from a third device: no second row
+  const s = await (await post(e, good({ name: 'OFFICE', score: 300, device: dev(3) }), { ip, now: NOW + 40_000 })).json();
+  assert.equal(s.best, false); assert.equal(s.rank, 1);
+  assert.equal((await top(e)).length, 1);
+});
+
+test('devices: five devices fill an address, a sixth is refused with address_full; a device on the board can still improve its row', async () => {
+  const e = env(); const ip = '7.7.7.9';
+  for (let i = 1; i <= ARCADE_ADDR_ROWS; i++) {
+    const r = await post(e, good({ name: `Desk ${i}`, score: 300 + i * 10, device: dev(i) }), { ip, now: NOW + i * 20_000 });
+    assert.equal(r.status, 200, `device ${i}`); assert.equal((await r.json()).best, true, `device ${i}`);
+  }
+  const sixth = await post(e, good({ name: 'Desk 6', score: 400, device: dev(6) }), { ip, now: NOW + 6 * 20_000 });
+  assert.equal(sixth.status, 409); assert.equal(await err(sixth), 'address_full');
+  assert.deepEqual((await top(e)).map(x => x.name), ['Desk 5', 'Desk 4', 'Desk 3', 'Desk 2', 'Desk 1']);
+  // a device already on the board improves its own row while the address is full
+  const again = await (await post(e, good({ name: 'Desk 1', score: 500, level: 6, ms: 70_000, device: dev(1) }), { ip, now: NOW + 7 * 20_000 })).json();
+  assert.equal(again.best, true); assert.equal(again.rank, 1);
+  // a lower score from a device on the board is "already on the board", not a refusal
+  const lower = await post(e, good({ name: 'Desk 2', score: 250, device: dev(2) }), { ip, now: NOW + 8 * 20_000 });
+  assert.equal(lower.status, 200); assert.equal((await lower.json()).best, false);
+  // another address is not affected
+  assert.equal((await post(e, good({ name: 'Home', device: dev(7) }), { ip: '6.6.6.7', now: NOW + 9 * 20_000 })).status, 200);
+  assert.equal((await top(e)).length, ARCADE_ADDR_ROWS + 1);
+});
+
+test('devices: a post without a token, or with a malformed one, is keyed by the address alone as before', async () => {
+  const e = env(); const ip = '7.7.8.1';
+  let r = await (await post(e, good({ name: 'Old page', score: 300 }), { ip, now: NOW })).json();
+  assert.equal(r.best, true);
+  // a malformed token counts as none: the same player as the token-less post, so its row is replaced, not joined
+  r = await (await post(e, good({ name: 'Old page 2', score: 400, level: 5, ms: 60_000, device: 'not-a-token' }), { ip, now: NOW + 20_000 })).json();
+  assert.equal(r.best, true); assert.deepEqual(r.top.map(x => x.name), ['Old page 2']);
+  for (const bad of [42, '', 'g'.repeat(32), dev(1).slice(1), dev(1) + '0', null, {}, [dev(1)]]) assert.equal(parseScore(good({ device: bad })).entry.device, null, JSON.stringify(bad));
+  assert.equal(parseScore(good({ device: dev(255) })).entry.device, dev(255));
+  assert.equal(parseScore(good({ device: dev(255).toUpperCase() })).entry.device, dev(255), 'upper case is the same token');
+});
+
+test('devices: a row from before tokens counts toward the address cap, and a post without a token still replaces it', async () => {
+  const e = env(); const ip = '7.7.8.2';
+  // the board holds this address's one row from before tokens (ipk = the address hash, no ak)
+  const ak = await hashHex(`arcade:board:${ip}`);
+  await e.KV.put(`arcade:top:${GAME}`, JSON.stringify([{ id: 'old1', name: 'Old', key: 'old', ipk: ak, score: 260, level: 3, won: false, ms: 40_000, at: NOW - 1 }]));
+  // four devices on the address take rows two to five
+  for (let i = 1; i < ARCADE_ADDR_ROWS; i++) {
+    const r = await post(e, good({ name: `Desk ${i}`, score: 300 + i * 10, device: dev(i) }), { ip, now: NOW + i * 20_000 });
+    assert.equal(r.status, 200, `device ${i}`);
+  }
+  assert.equal((await top(e)).length, ARCADE_ADDR_ROWS);
+  // a fifth device would be the sixth row: the address is full
+  const full = await post(e, good({ name: 'Desk 5', score: 500, level: 6, ms: 70_000, device: dev(5) }), { ip, now: NOW + 6 * 20_000 });
+  assert.equal(full.status, 409); assert.equal(await err(full), 'address_full');
+  // the old page (no token) from this address still replaces the old row as one player
+  const o = await (await post(e, good({ name: 'Old 2', score: 600, level: 7, ms: 80_000 }), { ip, now: NOW + 7 * 20_000 })).json();
+  assert.equal(o.best, true);
+  assert.deepEqual((await top(e)).map(x => x.name), ['Old 2', 'Desk 4', 'Desk 3', 'Desk 2', 'Desk 1']);
+});
+
 test('ordering: score desc, then earlier first; the public board shows ten, the worker keeps a hundred', async () => {
   const e = env();
   for (let i = 0; i < ARCADE_KEEP + 5; i++) await post(e, good({ name: `P${i}`, score: 100 + (i % 7) * 10, level: 2, ms: 20_000 }), { now: NOW + i });
@@ -84,12 +178,27 @@ test('ordering: score desc, then earlier first; the public board shows ten, the 
   assert.equal(all.length, ARCADE_KEEP); assert.ok(all[0].id && all[0].ms);
 });
 
-test('rate limit: one post per address per 10 s, valid or not', async () => {
+test(`rate limit: ${ARCADE_RATE_BURST} posts per address per ${ARCADE_RATE_SEC} s (an office), valid or not, however many devices; another address is fine`, async () => {
   const e = env(); const ip = '5.5.5.5';
-  assert.equal((await post(e, good({ score: 0 }), { ip, now: NOW })).status, 400);
-  const r = await post(e, good(), { ip, now: NOW + 1000 });
-  assert.equal(r.status, 429); assert.equal(await err(r), 'rate'); assert.ok(Number(r.headers.get('retry-after')) <= ARCADE_RATE_SEC);
-  assert.equal((await post(e, good(), { ip, now: NOW + ARCADE_RATE_SEC * 1000 + 1 })).status, 200);
+  assert.equal((await post(e, good({ score: 0 }), { ip, now: NOW })).status, 400); // invalid, still counts
+  // colleagues on one wifi finishing within seconds of each other: the budget takes them
+  for (let i = 1; i < ARCADE_RATE_BURST; i++) assert.equal((await post(e, good({ name: `Desk ${i}`, device: dev(i) }), { ip, now: NOW + i * 500 })).status, 200, `post ${i + 1} of ${ARCADE_RATE_BURST}`);
+  // a token is free to mint, so a new device does not buy another post: the budget is the address's
+  const r = await post(e, good({ name: 'Desk 9', device: dev(9) }), { ip, now: NOW + 4_000 });
+  assert.equal(r.status, 429); assert.equal(await err(r), 'rate'); assert.equal(r.headers.get('retry-after'), String(ARCADE_RATE_SEC - 4));
+  assert.equal((await post(e, good(), { ip: '5.5.5.6', now: NOW + 4_000 })).status, 200);
+  // the window has passed but the key (60 s, KV's minimum TTL) is still there: a new window starts on the stored time
+  assert.equal((await post(e, good({ name: 'Other' }), { ip, now: NOW + ARCADE_RATE_SEC * 1000 + 1000 })).status, 200);
+  for (let i = 1; i < ARCADE_RATE_BURST; i++) assert.equal((await post(e, good({ name: 'Again' }), { ip, now: NOW + ARCADE_RATE_SEC * 1000 + 1000 + i })).status, 200);
+  assert.equal((await post(e, good({ name: 'Again' }), { ip, now: NOW + ARCADE_RATE_SEC * 1000 + 2000 })).status, 429);
+  e.KV.now = 61_000; // memKV clock: the key has expired
+  assert.equal((await post(e, good({ name: 'Third' }), { ip, now: NOW + 61_000 })).status, 200);
+  // a key written before the budget existed (a bare timestamp) reads as one post in its window
+  const e3 = env(); await e3.KV.put('arcade:ip:' + await hashHex(`arcade:${ip}`), String(NOW));
+  for (let i = 1; i < ARCADE_RATE_BURST; i++) assert.equal((await post(e3, good(), { ip, now: NOW + i })).status, 200, `old key, post ${i + 1}`);
+  assert.equal((await post(e3, good(), { ip, now: NOW + ARCADE_RATE_BURST })).status, 429);
+  // the IP itself is never stored, only a hash
+  assert.ok(![...e.KV.m.keys(), ...e.KV.m.values()].some(x => JSON.stringify(x).includes(ip)));
 });
 
 test('origin: posts from elsewhere are refused; reads are open; preflight answers', async () => {
