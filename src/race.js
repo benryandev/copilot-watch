@@ -1,8 +1,12 @@
 // Race time-trial leaderboard for the Copilot Check ecosystem game: best lap per name, top 100 per track in one KV key.
-//   race:top:<track>   [{id, name, key, ms, splits, trace, at}] sorted by ms, then earlier at; at most 100, one per name (key = lower case)
+//   race:top:<track>   [{id, name, key, ipk, ak, ms, splits, trace, at}] sorted by ms, then earlier at; at most 100, one per name
+//                      (key = lower case) and one per player (ipk: a hash of the poster's address and device token, or of the
+//                      address alone when the page sent no token), at most RACE_ADDR_ROWS per address (ak: a hash of the
+//                      address; rows from before tokens have no ak and carry that same hash as ipk). Hashes are never sent out.
 //                      trace: the lap's path for the ghost car, [[t ms, x, z, heading], ...] ten times a second, or null for laps
 //                      posted before ghosts existed (the page then rebuilds a ghost from the checkpoint times)
-//   race:ip:<hash>     attempt time (one post per IP every 30 s; the key lives 60 s, KV's minimum TTL). The IP is hashed, never stored.
+//   race:ip:<hash>     {t, n}: posts from one address in the window that began at t (RACE_RATE_BURST per RACE_RATE_SEC; the key
+//                      lives 60 s, KV's minimum TTL). The IP is hashed, never stored.
 //   race:stats:<track>:<YYYY-MM-DD>  {open, found, start, finish, post}: visitors per UTC day who reached each stage
 //   race:seen:<hash>   one per IP, track, day and stage, so a visitor counts once per stage per day; expires after 2 days
 // Times are checked against the track (src/race-tracks.js): every checkpoint segment must take at least its length / RACE_MAX_SPEED.
@@ -13,6 +17,13 @@ import { newId } from './paper.js';
 
 export const RACE_ORIGINS = ['https://strike.benryan.com.au', 'http://localhost:8766'];
 export const RACE_KEEP = 100, RACE_SHOW = 10, RACE_RATE_SEC = 10, RACE_MAX_BODY = 16384, RACE_NAME_MAX = 20;
+/** People who share one public address (a colleague on Tynus's office wifi was told a better time was already on the board,
+ * 4 Nov 2026): each device gets its own row, up to this many rows per address, and the post limit is a budget of this many per
+ * address per RACE_RATE_SEC rather than one. The budget stays per address, not per device: a token is free to mint. */
+export const RACE_ADDR_ROWS = 5, RACE_RATE_BURST = 5;
+/** A device token: 16 random bytes as hex, made once by the page and kept in its storage. Anything else counts as no token. */
+const DEVICE = /^[0-9a-f]{32}$/i;
+export const parseDevice = v => (typeof v === 'string' && DEVICE.test(v) ? v.toLowerCase() : null);
 /** Ghost trace: at least 2 and at most 400 samples (40 s at ten a second; the page thins longer laps). */
 export const RACE_TRACE_MIN = 2, RACE_TRACE_MAX = 400;
 /** A trace must cover at least this share of the lap length (an inside line is shorter than the centreline, a fake is far shorter). */
@@ -133,7 +144,7 @@ export function parseTime(body) {
   if (body.trace === undefined || body.trace === null) return { ok: false, error: 'bad_trace', why: 'missing' };
   const tr = parseTrace(body.trace, ms, t);
   if (!tr.ok) return { ok: false, error: 'bad_trace', why: tr.why };
-  return { ok: true, entry: { track: body.track, name: n.name, key: n.name.toLowerCase(), ms, splits: [...splits], trace: tr.trace } };
+  return { ok: true, entry: { track: body.track, name: n.name, key: n.name.toLowerCase(), ms, splits: [...splits], trace: tr.trace, device: parseDevice(body.device) } };
 }
 
 // ---- board ----
@@ -143,16 +154,23 @@ const order = (a, b) => a.ms - b.ms || a.at - b.at;
 const pub = rows => rows.slice(0, RACE_SHOW).map(({ name, ms, at }) => ({ name, ms, at }));
 export const getBoard = async (kv, track) => (await kv.get(boardKey(track), 'json')) || [];
 
-/** Add a validated entry: one row per name and one per player (entry.ipk, a hash of the poster's address), each
- *  keeping its best. A faster lap under a new name from the same address replaces that player's row, name and all;
- *  a slower one changes nothing (one player filled nine of the top ten under name variants, 1 Nov 2026).
- *  Returns {rank (1-based or null), best, rows}. */
+/** Add a validated entry: one row per name and one per player (entry.ipk, a hash of the poster's address and device token),
+ *  each keeping its best. A faster lap under a new name from the same player replaces that player's row, name and all;
+ *  a slower one changes nothing (one player filled nine of the top ten under name variants, 1 Nov 2026). One address
+ *  (entry.ak) holds at most RACE_ADDR_ROWS rows, so clearing storage for a fresh token cannot refill the board from one
+ *  connection: a post that would add a row past that is refused with error 'address_full', while a post that replaces a
+ *  row the address already holds always goes through. Rows from before tokens carry the address hash as ipk and no ak.
+ *  Returns {rank (1-based or null), best, rows, error?}. */
 export async function addTime(kv, entry, now = Date.now()) {
   const rows = await getBoard(kv, entry.track);
   const same = r => r.key === entry.key || (entry.ipk && r.ipk === entry.ipk);
   const held = rows.filter(same).sort(order)[0];
   if (held && held.ms <= entry.ms) return { rank: rows.indexOf(held) + 1, best: false, rows };
-  const row = { id: newId(), name: entry.name, key: entry.key, ipk: entry.ipk || null, ms: entry.ms, splits: entry.splits, trace: entry.trace || null, at: now };
+  if (entry.ak) {
+    const mine = rows.filter(r => (r.ak || r.ipk) === entry.ak);
+    if (mine.length >= RACE_ADDR_ROWS && !mine.some(same)) return { rank: null, best: false, rows, error: 'address_full' };
+  }
+  const row = { id: newId(), name: entry.name, key: entry.key, ipk: entry.ipk || null, ak: entry.ak || null, ms: entry.ms, splits: entry.splits, trace: entry.trace || null, at: now };
   const next = [...rows.filter(r => !same(r)), row].sort(order).slice(0, RACE_KEEP);
   const i = next.indexOf(row);
   if (i < 0) return { rank: held ? rows.indexOf(held) + 1 : null, best: false, rows }; // missed the top 100: nothing changes
@@ -257,23 +275,32 @@ export async function handleRaceApi(req, env, { now = Date.now(), waitUntil = nu
     if (!RACE_ORIGINS.includes(origin)) return json({ error: 'origin' }, 403, origin);
     const r = await readJson(req);
     if (r.error) return json({ error: r.error }, r.status, origin);
-    // Every post that parses counts toward the per-IP limit, valid or not, so guessing the checks is slow.
+    // Every post that parses counts toward the address's budget, valid or not, so guessing the checks is slow.
     const ip = req.headers.get('cf-connecting-ip') || '?';
-    const k = await ipKey(ip);
-    const prev = Number(await kv.get(k));
-    if (prev && now - prev < RACE_RATE_SEC * 1000) {
-      const wait = Math.max(1, Math.ceil((prev + RACE_RATE_SEC * 1000 - now) / 1000));
+    const k = await ipKey(ip), windowMs = RACE_RATE_SEC * 1000;
+    const raw = await kv.get(k, 'json');
+    const w = raw && typeof raw === 'object' ? raw : raw ? { t: Number(raw), n: 1 } : null; // before the budget the key held a bare timestamp
+    const open = w && now - w.t < windowMs ? w : null;
+    if (open && open.n >= RACE_RATE_BURST) {
+      const wait = Math.max(1, Math.ceil((open.t + windowMs - now) / 1000));
       return json({ error: 'rate', retryAfter: Math.min(wait, RACE_RATE_SEC) }, 429, origin, { 'retry-after': String(Math.min(wait, RACE_RATE_SEC)) });
     }
-    await kv.put(k, String(now), { expirationTtl: Math.max(60, RACE_RATE_SEC) }); // KV won't take a TTL under 60 s; the window is checked above
+    await kv.put(k, JSON.stringify(open ? { t: open.t, n: open.n + 1 } : { t: now, n: 1 }), { expirationTtl: Math.max(60, RACE_RATE_SEC) }); // KV won't take a TTL under 60 s; the window is checked above
     const p = parseTime(r.body);
     if (!p.ok) {
       // Rejections are rare and the message to the player is short: keep the detail in the log for a tail
       console.log('race reject', JSON.stringify({ error: p.error, why: p.why ?? null, segment: p.segment ?? null, ms: r.body?.ms, splits: r.body?.splits, trace: Array.isArray(r.body?.trace) ? r.body.trace.length : null, name: r.body?.name }));
       return json({ error: p.error, ...(p.segment != null ? { segment: p.segment } : {}) }, 400, origin);
     }
-    if (ip !== '?') p.entry.ipk = await hashHex(`race:board:${ip}`); // stored on the row, never sent out
-    const { rank, best, rows } = await addTime(kv, p.entry, now);
+    if (ip !== '?') { // stored on the row, never sent out
+      p.entry.ak = await hashHex(`race:board:${ip}`); // the address (rows from before tokens carry this very hash as ipk)
+      p.entry.ipk = p.entry.device ? await hashHex(`race:board:${ip}:${p.entry.device}`) : p.entry.ak; // the player: address and device
+    }
+    const { rank, best, rows, error } = await addTime(kv, p.entry, now);
+    if (error) { // the address already holds its five rows and this would be a sixth
+      console.log('race reject', JSON.stringify({ error, ms: p.entry.ms, name: p.entry.name }));
+      return json({ error }, 409, origin);
+    }
     if (rank === 1 && best) announceRecord(env, { track: p.entry.track, name: p.entry.name, ms: p.entry.ms }, waitUntil);
     await countEvent(kv, p.entry.track, 'post', ip, now);
     return json({ ok: true, rank, best, top: pub(rows) }, 200, origin);
