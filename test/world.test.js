@@ -136,7 +136,7 @@ test('room: duplicates and fallbacks resolve across joins', () => {
 test('room: close broadcasts leave and count; a leaver frees their name', () => {
   const r = room(); hi(r, 'a', 'Aveli'); hi(r, 'b', 'B');
   const { out } = r.close('a', 5);
-  assert.deepEqual(to(out, 'b'), [{ t: 'leave', id: 'a' }, { t: 'n', online: 1 }]);
+  assert.deepEqual(to(out, 'b'), [{ t: 'leave', id: 'a' }, { t: 'n', online: 1, zones: { hub: 1 } }]);
   assert.equal(to(hi(r, 'c', 'Aveli', 6).out, 'c')[0].name, 'Aveli');
   assert.equal(r.close('zz', 7).out.length, 0);
 });
@@ -179,7 +179,7 @@ test('room: restore rebuilds the roster from attachments and the next snapshot r
 test('room: who() never includes ipKey', () => {
   const r = room(); hi(r, 'a', 'A'); pose(r, 'a', 0);
   const w = r.who()[0];
-  assert.deepEqual(Object.keys(w).sort(), ['colour', 'id', 'name', 'since', 'x', 'z']);
+  assert.deepEqual(Object.keys(w).sort(), ['colour', 'id', 'name', 'since', 'x', 'z', 'zone']);
   assert.equal(w.x, 1);
 });
 
@@ -502,4 +502,92 @@ test('room: an emote goes to everyone else, not back to the sender; garbage is b
   assert.deepEqual(send(1, 1300).out, []); // third: dropped
   assert.equal(send(1, 2001).out.length, 2); // the window has moved on
   assert.deepEqual(r.onMessage('zz', JSON.stringify({ t: 'emote', e: 1 }), 3000).out, [], 'unknown socket');
+});
+
+// ---- zones: venues share the room, each sees only its own zone ----
+import { WORLD_HUB_TRACK, ZONE_RE, parseZone } from '../src/world.js';
+import { RACE_TRACKS } from '../src/race-tracks.js';
+
+test('zones: parseZone keeps a short lower-case slug, anything else is hub', () => {
+  assert.equal(parseZone('lagoon-v1'), 'lagoon-v1'); assert.equal(parseZone('hub'), 'hub'); assert.equal(parseZone('a'.repeat(16)), 'a'.repeat(16));
+  for (const bad of [undefined, null, '', 'Bad Zone!', 'Lagoon', 'a'.repeat(17), 7, {}, ['lagoon']]) assert.equal(parseZone(bad), 'hub', JSON.stringify(bad));
+  assert.ok(ZONE_RE.test('lagoon-v1'));
+});
+
+test('zones: hi carries a zone, bad or missing zones are hub, counts are per zone', () => {
+  const r = room();
+  hi(r, 'a', 'A', 0, { zone: 'lagoon-v1' }); hi(r, 'b', 'B', 0);
+  const { out } = hi(r, 'c', 'C', 0, { zone: 'Bad Zone!' });
+  const ok = to(out, 'c').find(m => m.t === 'ok');
+  assert.deepEqual(ok.zones, { hub: 2, 'lagoon-v1': 1 });
+  assert.deepEqual(Object.fromEntries(ok.peers.map(p => [p.id, p.zone])), { a: 'lagoon-v1', b: 'hub' });
+  assert.deepEqual(to(out, 'a'), [{ t: 'join', id: 'c', name: 'C', colour: ok.colour, zone: 'hub' }, { t: 'n', online: 3, zones: { hub: 2, 'lagoon-v1': 1 } }]);
+  assert.deepEqual(to(out, 'b').map(m => m.t), ['join', 'n']);
+  assert.equal(r.players.get('c').zone, 'hub');
+  // leave and kick carry the counts too
+  assert.deepEqual(to(r.close('b').out, 'a'), [{ t: 'leave', id: 'b' }, { t: 'n', online: 2, zones: { hub: 1, 'lagoon-v1': 1 } }]);
+  assert.deepEqual(to(r.kick({ name: 'C' }, 5, 0).out, 'a'), [{ t: 'leave', id: 'c' }, { t: 'n', online: 1, zones: { 'lagoon-v1': 1 } }]);
+});
+
+test('zones: snapshots go to the mover\'s zone only; movers in two zones make two snapshots', () => {
+  const r = room();
+  hi(r, 'a', 'A'); hi(r, 'b', 'B', 0, { zone: 'lagoon-v1' }); hi(r, 'c', 'C', 0, { zone: 'lagoon-v1' });
+  // a hub-only mover: the hub hears it, the lagoon hears nothing
+  const first = pose(r, 'a', 0);
+  assert.deepEqual(snaps(first.out).map(([id]) => id), ['a']);
+  assert.deepEqual(snaps(first.out)[0][1], { t: 's', now: 0, p: [['a', 1, 2, 0.5, 3, 0]] });
+  // a lagoon mover and a hub mover in the same window: one snapshot per zone, each with only its own movers
+  assert.equal(pose(r, 'b', 50, { x: 7 }).flushIn, 50); assert.equal(pose(r, 'a', 60, { x: 5 }).flushIn, 40);
+  const f = r.flush(100);
+  assert.deepEqual(f.out.map(([id]) => id).sort(), ['a', 'b', 'c']);
+  assert.deepEqual(to(f.out, 'a'), [{ t: 's', now: 100, p: [['a', 5, 2, 0.5, 3, 0]] }]);
+  assert.deepEqual(to(f.out, 'b'), [{ t: 's', now: 100, p: [['b', 7, 2, 0.5, 3, 0]] }]);
+  assert.deepEqual(to(f.out, 'c'), to(f.out, 'b'));
+  assert.ok(f.out.every(([, m]) => m.t === 's'), 'no n on snapshots');
+  assert.equal(r.dirty.size, 0); assert.equal(r.flush(200).out.length, 0);
+});
+
+test('zones: emotes stay in the zone', () => {
+  const r = room();
+  hi(r, 'a', 'A'); hi(r, 'b', 'B', 0, { zone: 'lagoon-v1' }); hi(r, 'c', 'C', 0, { zone: 'lagoon-v1' });
+  assert.deepEqual(r.onMessage('b', JSON.stringify({ t: 'emote', e: 2 }), 1000).out, [['c', { t: 'emote', id: 'b', e: 2 }]]);
+  assert.deepEqual(r.onMessage('a', JSON.stringify({ t: 'emote', e: 1 }), 1000).out, [], 'alone in the hub: nobody to tell');
+});
+
+test('zones: who reports zones; the attachment keeps a venue zone through a wake-up', () => {
+  const r = room(); hi(r, 'a', 'A'); hi(r, 'b', 'B', 0, { zone: 'lagoon-v1' });
+  assert.deepEqual(r.who().map(w => [w.id, w.zone]), [['a', 'hub'], ['b', 'lagoon-v1']]);
+  assert.equal(r.attachment('b').zone, 'lagoon-v1');
+  const r2 = room(); r2.restore(['a', 'b'].map(id => r.attachment(id)));
+  assert.deepEqual(r2.zones(), { hub: 1, 'lagoon-v1': 1 });
+  assert.deepEqual(snaps(pose(r2, 'b', 5000).out).map(([id]) => id), ['b']);
+  r2.restore([{ id: 'x', name: 'X', colour: '#fff', ipKey: 'kx', since: 0, zone: 'NOT OK' }]);
+  assert.equal(r2.players.get('x').zone, 'hub');
+});
+
+test('zones: race.open and race.join from a venue are refused with the note; the race is untouched', () => {
+  const r = room(); hi(r, 'a', 'A'); hi(r, 'b', 'B', 0, { zone: 'lagoon-v1' });
+  const refused = [['b', { t: 'err', error: 'race_zone', why: 'Live races run at the Raceway for now' }]];
+  const open = r.onMessage('b', JSON.stringify({ t: 'race.open' }), 1000);
+  assert.deepEqual(open, { out: refused }); assert.equal(r.race, null);
+  assert.equal(r.onMessage('a', JSON.stringify({ t: 'race.open' }), 2000).raceChanged, true);
+  assert.deepEqual(r.onMessage('b', JSON.stringify({ t: 'race.join' }), 3000), { out: refused });
+  assert.deepEqual(r.onMessage('b', JSON.stringify({ t: 'race.open' }), 4000), { out: refused }, 'an open race is not joined through open either');
+  assert.equal(r.race.entrants.size, 1); assert.ok(r.race.entrants.has('a'));
+});
+
+test('RACE_CHECKPOINTS comes from the registry', () => {
+  assert.equal(WORLD_HUB_TRACK, 'realfi-v1');
+  assert.equal(RACE_CHECKPOINTS, RACE_TRACKS[WORLD_HUB_TRACK].checkpoints.length);
+  assert.equal(RACE_CHECKPOINTS, 5);
+});
+
+test('zones: a venue pose beyond the world radius is rejected like any other', () => {
+  const r = room(); hi(r, 'b', 'B', 0, { zone: 'lagoon-v1' });
+  assert.equal(pose(r, 'b', 0, { x: 400, z: 0 }).close, undefined);
+  assert.equal(r.players.get('b').pose.x, 400);
+  assert.deepEqual(pose(r, 'b', 100, { x: 401 }), { out: [] });
+  assert.deepEqual(pose(r, 'b', 200, { x: 401 }), { out: [] });
+  assert.deepEqual(pose(r, 'b', 300, { x: 401 }), { out: [], close: 'bad' });
+  assert.equal(r.players.get('b').pose.x, 400, 'the bad poses never landed');
 });

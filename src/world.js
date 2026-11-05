@@ -1,6 +1,7 @@
 // The world room for the ecosystem map's multiplayer: who's driving, where, under what name.
 // Pure logic, no Cloudflare types; the Durable Object shell in world-worker.js wires it to websockets.
 import { cleanName } from './race.js';
+import { raceTrack } from './race-tracks.js';
 
 export const WORLD_VERSION = '2026-11-02.3'; // bumped on deploy so /presence shows which code the room runs
 export const WORLD_OFF_KEY = 'world:off'; // any value under this KV key pauses new connections and closes live ones
@@ -96,7 +97,16 @@ export const RACE_DEAD_HEAT_MS = 100; // finishes closer than this share a posit
 export const RACE_KEEP_MS = 300_000; // a finished race is kept this long for the sheets
 export const RACE_MAX_RUN_MS = 300_000; // a race nobody finishes ends on its own this long after the start
 export const RACE_MSG_MAX_HZ = 2; // race.open/join/leave per second per socket
-export const RACE_CHECKPOINTS = 5; // realfi-v1
+// Live races run on the hub's track only. Its checkpoint count comes from the registry; a hub track that is missing or
+// not open fails the import, so a deploy with a broken registry fails loudly rather than racing on a wrong count.
+export const WORLD_HUB_TRACK = 'realfi-v1';
+const hubTrack = raceTrack(WORLD_HUB_TRACK);
+if (!hubTrack) throw new Error(`world: the hub track ${WORLD_HUB_TRACK} is not open in the registry`);
+export const RACE_CHECKPOINTS = hubTrack.checkpoints.length;
+// ── Zones: the hub and each venue page share the room, but see and hear only their own zone ──
+export const ZONE_RE = /^[a-z0-9-]{1,16}$/;
+export const parseZone = (z) => (typeof z === 'string' && ZONE_RE.test(z) ? z : 'hub');
+const RACE_ZONE_ERR = { t: 'err', error: 'race_zone', why: 'Live races run at the Raceway for now' };
 // ── Emotes: a wave, a party, fire, a flag, a thumbs up (the page draws them; the room only relays an index) ──
 export const EMOTE_COUNT = 5;
 export const EMOTE_MAX_HZ = 2; // per socket per second; each one fans out to the room
@@ -139,14 +149,14 @@ export class Room {
     if (this.blocked('s:' + id, now) || this.blocked('i:' + ipKey, now)) return { ok: false, error: 'blocked' };
     if ([...this.players.values()].filter(p => p.ipKey === ipKey).length >= WORLD_IP_MAX) return { ok: false, error: 'ip' };
     if (this.players.size >= WORLD_MAX) return { ok: false, error: 'full' };
-    this.players.set(id, { id, ipKey, since: now, joined: false, name: null, colour: null, pose: null, times: [], pings: [], races: [], emotes: [], dropped: [], lastJump: -Infinity, bad: 0, renamedAt: -Infinity, lastMsg: now });
+    this.players.set(id, { id, ipKey, since: now, joined: false, name: null, colour: null, zone: 'hub', pose: null, times: [], pings: [], races: [], emotes: [], dropped: [], lastJump: -Infinity, bad: 0, renamedAt: -Infinity, lastMsg: now });
     return { ok: true };
   }
 
   /** What the shell stores on the socket so the roster survives hibernation. */
   attachment(id) {
     const p = this.players.get(id);
-    return p?.joined ? { id: p.id, name: p.name, colour: p.colour, ipKey: p.ipKey, since: p.since, heardAt: p.lastMsg } : null;
+    return p?.joined ? { id: p.id, name: p.name, colour: p.colour, ipKey: p.ipKey, since: p.since, heardAt: p.lastMsg, ...(p.zone !== 'hub' ? { zone: p.zone } : {}) } : null; // hub is the default, left out
   }
 
   /** Rebuild joined players from stored attachments after a wake-up. */
@@ -154,14 +164,20 @@ export class Room {
     for (const e of entries) {
       if (!e?.id) continue;
       // Last heard is what the attachment says (refreshed every 30 s of messages), else when it joined: a wake-up must not make a dead socket look alive
-      this.players.set(e.id, { id: e.id, ipKey: e.ipKey, since: e.since, joined: true, name: e.name, colour: e.colour, pose: null, times: [], pings: [], races: [], emotes: [], dropped: [], lastJump: -Infinity, bad: 0, renamedAt: -Infinity, lastMsg: e.heardAt ?? e.since ?? now });
+      this.players.set(e.id, { id: e.id, ipKey: e.ipKey, since: e.since, joined: true, name: e.name, colour: e.colour, zone: parseZone(e.zone), pose: null, times: [], pings: [], races: [], emotes: [], dropped: [], lastJump: -Infinity, bad: 0, renamedAt: -Infinity, lastMsg: e.heardAt ?? e.since ?? now });
       this.colourN++;
     }
   }
 
   broadcast(m, except = null) { return this.joined().filter(p => p.id !== except).map(p => msg(p.id, m)); }
+  /** The same, to one zone only. */
+  broadcastZone(m, zone, except = null) { return this.joined().filter(p => p.zone === zone && p.id !== except).map(p => msg(p.id, m)); }
+  /** Joined players per zone, e.g. { hub: 2, 'lagoon-v1': 1 }; a zone with nobody in it is left out. */
+  zones() { const z = {}; for (const p of this.players.values()) if (p.joined) z[p.zone] = (z[p.zone] ?? 0) + 1; return z; }
+  /** The head count everyone hears on join, leave and kick. */
+  count() { return { t: 'n', online: this.online(), zones: this.zones() }; }
 
-  peerView(p) { return { id: p.id, name: p.name, colour: p.colour, ...(p.pose ? { x: p.pose.x, z: p.pose.z, h: p.pose.h, s: p.pose.s } : {}) }; }
+  peerView(p) { return { id: p.id, name: p.name, colour: p.colour, zone: p.zone, ...(p.pose ? { x: p.pose.x, z: p.pose.z, h: p.pose.h, s: p.pose.s } : {}) }; }
 
   /** One frame from a socket. Returns the messages to send, whether to close, and when to flush a held snapshot. */
   onMessage(id, raw, now) {
@@ -185,12 +201,13 @@ export class Room {
     if (m.t === 'hi' && !p.joined) {
       p.name = pickName(m.name, { ...this.grant(m.owner), taken: this.taken(), next: () => this.nextDriver() }).name;
       p.colour = COLOURS[this.colourN++ % COLOURS.length];
+      p.zone = parseZone(m.zone); // set once, on hi: a venue is its own page, so changing zone is a new socket
       p.joined = true; p.bad = 0;
       const peers = this.joined().filter(o => o !== p).map(o => this.peerView(o));
       const race = this.race && this.race.state !== 'done' ? { ...this.raceView(), t: undefined, state: this.race.state, order: this.order() } : null;
       if (race) delete race.t;
-      return { out: [msg(id, { t: 'ok', id, name: p.name, colour: p.colour, now, peers, race }),
-        ...this.broadcast({ t: 'join', id, name: p.name, colour: p.colour }, id), ...this.broadcast({ t: 'n', online: this.online() }, id)] };
+      return { out: [msg(id, { t: 'ok', id, name: p.name, colour: p.colour, now, peers, zones: this.zones(), race }),
+        ...this.broadcast({ t: 'join', id, name: p.name, colour: p.colour, zone: p.zone }, id), ...this.broadcast(this.count(), id)] };
     }
     if (m.t === 'ping') return over(p.pings, WORLD_PING_MAX_HZ) ? flooded() : { out: [msg(id, { t: 'pong', now, echo: m.echo })] };
     if (!p.joined) return bad();
@@ -220,7 +237,7 @@ export class Room {
       if (!Number.isInteger(m.e) || m.e < 0 || m.e >= EMOTE_COUNT) return bad();
       p.bad = 0;
       if (over(p.emotes, EMOTE_MAX_HZ)) return flooded();
-      return { out: this.broadcast({ t: 'emote', id, e: m.e }, id) };
+      return { out: this.broadcastZone({ t: 'emote', id, e: m.e }, p.zone, id) };
     }
     if (m.t === 'race.open' || m.t === 'race.join' || m.t === 'race.leave') {
       p.bad = 0;
@@ -246,6 +263,7 @@ export class Room {
   /** Race pressed: a new race with this player in slot 1, or a join if one is open. */
   openRace(id, now) {
     const p = this.players.get(id);
+    if (p.zone !== 'hub') return { out: [msg(id, RACE_ZONE_ERR)] };
     if (this.race && this.race.state === 'open') return this.joinRace(id, now);
     if (this.race && this.race.state !== 'done') return { out: [msg(id, { t: 'err', error: 'race_running' })] };
     this.race = { id: crypto.randomUUID().slice(0, 8), host: id, hostName: p.name, state: 'open', openedAt: now, startsAt: now + RACE_JOIN_MS, entrants: new Map([[id, { slot: 1, name: p.name, cps: [], fin: null, dnf: false }]]), firstFinAt: null, endedAt: null };
@@ -253,6 +271,7 @@ export class Room {
   }
   joinRace(id) {
     const r = this.race, p = this.players.get(id);
+    if (p.zone !== 'hub') return { out: [msg(id, RACE_ZONE_ERR)] };
     if (!r || r.state === 'done') return { out: [msg(id, { t: 'err', error: 'race_none' })] };
     if (r.state !== 'open') return { out: [msg(id, { t: 'err', error: 'race_running' })] };
     if (r.entrants.has(id)) return { out: [] };
@@ -365,13 +384,23 @@ export class Room {
     return rows.map(({ slot, ...x }) => x);
   }
 
-  /** Send the held snapshot (movers since the last one) to everyone. */
+  /** Send the held snapshots (movers since the last one): one per zone that has movers, to that zone's players only.
+   * The movers are grouped by zone in one pass over `dirty`; nothing per zone is kept between flushes. */
   flush(now) {
     if (!this.dirty.size) return { out: [] };
-    const p = [...this.dirty].map(id => this.players.get(id)).filter(q => q?.pose).map(q => [q.id, q.pose.x, q.pose.z, q.pose.h, q.pose.s, q.pose.j ? 1 : 0]);
+    const snaps = new Map(); // zone → { t: 's', now, p }
+    for (const id of this.dirty) {
+      const q = this.players.get(id);
+      if (!q?.pose) continue;
+      const row = [q.id, q.pose.x, q.pose.z, q.pose.h, q.pose.s, q.pose.j ? 1 : 0];
+      const s = snaps.get(q.zone);
+      if (s) s.p.push(row); else snaps.set(q.zone, { t: 's', now, p: [row] });
+    }
     this.dirty.clear();
     this.lastSnap = now;
-    return { out: this.broadcast({ t: 's', now, p }) };
+    const out = [];
+    for (const o of this.players.values()) { const s = o.joined && snaps.get(o.zone); if (s) out.push(msg(o.id, s)); }
+    return { out };
   }
 
   /** A socket went away. */
@@ -382,7 +411,7 @@ export class Room {
     this.players.delete(id);
     this.dirty.delete(id);
     if (!p.joined) return { out: [] };
-    return { out: [...race.out.filter(([to]) => to !== id), ...this.broadcast({ t: 'leave', id }), ...this.broadcast({ t: 'n', online: this.online() })], raceChanged: !!race.raceChanged };
+    return { out: [...race.out.filter(([to]) => to !== id), ...this.broadcast({ t: 'leave', id }), ...this.broadcast(this.count())], raceChanged: !!race.raceChanged };
   }
 
   /** Drop sockets nothing has been heard from for WORLD_IDLE_MS: browsers killed without a close frame. The shell closes them. */
@@ -404,7 +433,7 @@ export class Room {
   }
 
   /** For the admin: who's here (no addresses). */
-  who() { return this.joined().map(p => ({ id: p.id, name: p.name, colour: p.colour, x: p.pose?.x ?? null, z: p.pose?.z ?? null, since: p.since })); }
+  who() { return this.joined().map(p => ({ id: p.id, name: p.name, colour: p.colour, zone: p.zone, x: p.pose?.x ?? null, z: p.pose?.z ?? null, since: p.since })); }
 
   /** Block matching players (by id, or by name ignoring case and a " (2)" suffix) for `minutes` and drop them. The shell closes the sockets. */
   kick({ id, name } = {}, minutes, now) {

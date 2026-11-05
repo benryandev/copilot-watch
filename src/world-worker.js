@@ -139,7 +139,7 @@ export class World {
       await this.armAlarm();
       return new Response(null, { status: 101, webSocket: client });
     }
-    if (pathname === '/presence') return json({ online: this.room.online(), version: WORLD_VERSION }, 200, '');
+    if (pathname === '/presence') return json({ online: this.room.online(), zones: this.room.zones(), version: WORLD_VERSION }, 200, '');
     if (pathname === '/who') return json({ online: this.room.online(), who: this.room.who() }, 200, '');
     if (pathname === '/kick') {
       let body = {};
