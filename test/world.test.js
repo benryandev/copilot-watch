@@ -514,7 +514,7 @@ test('zones: parseZone keeps a short lower-case slug, anything else is hub', () 
   for (const bad of [undefined, null, '', 'Bad Zone!', 'Lagoon', 'a'.repeat(17), 7, {}, ['lagoon']]) assert.equal(parseZone(bad, ids), 'hub', JSON.stringify(bad));
   assert.ok(ZONE_RE.test('lagoon-v1'));
   // only the hub or a registry key is a zone: a made-up slug cannot put text on everyone's sheet
-  assert.equal(parseZone('evil-zone', ids), 'hub'); assert.equal(parseZone('evil-zone'), 'hub'); assert.equal(parseZone('lagoon-v1'), 'hub', 'not in the registry today');
+  assert.equal(parseZone('evil-zone', ids), 'hub'); assert.equal(parseZone('evil-zone'), 'hub'); assert.equal(parseZone('lagoon-v1'), 'lagoon-v1', 'in the registry (not yet open) since 5 Nov');
   assert.ok(TRACK_IDS.includes('realfi-v1'));
 });
 
