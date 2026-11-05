@@ -38,6 +38,7 @@ test('sanity: checkpoints increasing and inside the lap, minMs at most length / 
 test("src/tracks.json matches the site's copy (skipped when no sibling checkout is present)", (t) => {
   const root = resolve(import.meta.dirname, '..');
   const c = [process.env.CHECK_DIR && resolve(process.env.CHECK_DIR, 'ecosystem/tracks/tracks.json'),
+    resolve(root, '../copilot-check-lagoon-v2/ecosystem/tracks/tracks.json'),
     resolve(root, '../copilot-check-lagoon/ecosystem/tracks/tracks.json'),
     resolve(root, '../copilot-check-venue/ecosystem/tracks/tracks.json'), resolve(root, '../copilot-check-registry/ecosystem/tracks/tracks.json'), resolve(root, '../copilot-check/ecosystem/tracks/tracks.json')].filter(Boolean);
   const sib = c.find(existsSync);

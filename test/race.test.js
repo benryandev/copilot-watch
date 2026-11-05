@@ -1,6 +1,6 @@
 import test from 'node:test'; import assert from 'node:assert/strict';
 import { handleRaceApi, parseTime, parseTrace, isRude, cleanName, hashHex, RACE_ORIGINS, RACE_KEEP, RACE_SHOW, RACE_ADMIN_HEADER, RACE_TRACE_MAX, RACE_MAX_BODY, RACE_RATE_SEC, RACE_RATE_BURST, RACE_ADDR_ROWS } from '../src/race.js';
-import { RACE_TRACKS, RACE_MAX_MS } from '../src/race-tracks.js';
+import { RACE_TRACKS, RACE_MAX_MS, raceTrack } from '../src/race-tracks.js';
 import handler from '../src/worker.js';
 import { memKV } from './kv-mem.js';
 
@@ -498,8 +498,8 @@ test('a track that is not open is unknown_track on post, top and ghost', async (
 
 // The Lagoon (5 Nov 2026): open with limits from its floor. Splits are the floor line's per-gate crossing ms, lap last, from
 // tools/lapsim/results/lagoon.json on the site (copilot-check, `splits`); the trace is the lap's average speed, as above.
-const LAG = 'lagoon-v1', LT = RACE_TRACKS[LAG];
-const LAG_FLOOR_SPLITS = [5124, 6608, 8131, 12028, 14407, 16657, 19233, 21829, 23393, 24969, 26072, 29469];
+const LAG = 'lagoon-v2', LT = RACE_TRACKS[LAG];
+const LAG_FLOOR_SPLITS = [5120, 6330, 7653, 11985, 14386, 16633, 19154, 21939, 23456, 25124, 26286, 29694];
 const lagLap = (splits = LAG_FLOOR_SPLITS) => {
   const ms = splits.at(-1), cps = splits.slice(0, -1);
   const step = Math.max(100, Math.ceil(ms / 399 / 100) * 100), v = LT.length / (ms / 1000), trace = [];
@@ -508,14 +508,14 @@ const lagLap = (splits = LAG_FLOOR_SPLITS) => {
   return { track: LAG, name: 'Ben', splits: cps, ms, trace };
 };
 
-test('the Lagoon is open with limits from its floor: minMs is 0.97 of 29469', () => {
-  assert.ok(LT, 'lagoon-v1 is open'); assert.equal(LT.checkpoints.length, 11);
-  assert.equal(LT.minMs, Math.round(0.97 * 29469)); assert.equal(LT.minMs, 28585);
-  assert.deepEqual([LT.maxSpeed, LT.segMaxSpeed], [30.9, 35.6]);
+test('the Lagoon is open with limits from its floor: minMs is 0.97 of 29694', () => {
+  assert.ok(LT, 'lagoon-v2 is open'); assert.equal(raceTrack('lagoon-v1'), null); assert.equal(LT.checkpoints.length, 11);
+  assert.equal(LT.minMs, Math.round(0.97 * 29694)); assert.equal(LT.minMs, 28803);
+  assert.deepEqual([LT.maxSpeed, LT.segMaxSpeed], [30.8, 38]);
 });
 
 test('the Lagoon: a lap at minMs − 1000 is lap_too_fast', async () => {
-  const ms = LT.minMs - 1000, f = ms / 29469;
+  const ms = LT.minMs - 1000, f = ms / 29694;
   const splits = LAG_FLOOR_SPLITS.map(x => Math.round(x * f)); splits[splits.length - 1] = ms;
   assert.equal(await err(await post(env(), lagLap(splits))), 'lap_too_fast');
 });
@@ -529,7 +529,7 @@ test('the Lagoon: a lap that wades (inlet sector, gate 2 to gate 3, 4 s slower) 
   const s = LAG_FLOOR_SPLITS.map((x, i) => (i >= 2 ? x + 4000 : x)); // everything else keeps the floor's segments
   const r = await post(env(), lagLap(s));
   assert.equal(r.status, 200);
-  assert.equal((await r.json()).top[0].ms, 29469 + 4000);
+  assert.equal((await r.json()).top[0].ms, 29694 + 4000);
 });
 
 test('the Lagoon: /race/top is 200 with an empty board', async () => {

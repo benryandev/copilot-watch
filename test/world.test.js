@@ -509,12 +509,12 @@ import { WORLD_HUB_TRACK, ZONE_RE, parseZone } from '../src/world.js';
 import { RACE_TRACKS, TRACK_IDS } from '../src/race-tracks.js';
 
 test('zones: parseZone keeps a short lower-case slug, anything else is hub', () => {
-  const ids = ['realfi-v1', 'lagoon-v1'];
-  assert.equal(parseZone('lagoon-v1', ids), 'lagoon-v1'); assert.equal(parseZone('hub', ids), 'hub'); assert.equal(parseZone('realfi-v1'), 'realfi-v1');
+  const ids = ['realfi-v1', 'lagoon-v2'];
+  assert.equal(parseZone('lagoon-v2', ids), 'lagoon-v2'); assert.equal(parseZone('hub', ids), 'hub'); assert.equal(parseZone('realfi-v1'), 'realfi-v1');
   for (const bad of [undefined, null, '', 'Bad Zone!', 'Lagoon', 'a'.repeat(17), 7, {}, ['lagoon']]) assert.equal(parseZone(bad, ids), 'hub', JSON.stringify(bad));
-  assert.ok(ZONE_RE.test('lagoon-v1'));
+  assert.ok(ZONE_RE.test('lagoon-v2')); assert.equal(parseZone('lagoon-v1'), 'hub', 'the old id is gone from the registry');
   // only the hub or a registry key is a zone: a made-up slug cannot put text on everyone's sheet
-  assert.equal(parseZone('evil-zone', ids), 'hub'); assert.equal(parseZone('evil-zone'), 'hub'); assert.equal(parseZone('lagoon-v1'), 'lagoon-v1', 'in the registry (not yet open) since 5 Nov');
+  assert.equal(parseZone('evil-zone', ids), 'hub'); assert.equal(parseZone('evil-zone'), 'hub'); assert.equal(parseZone('lagoon-v2'), 'lagoon-v2', 'in the registry');
   assert.ok(TRACK_IDS.includes('realfi-v1'));
 });
 
