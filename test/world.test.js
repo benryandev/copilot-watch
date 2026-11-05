@@ -506,32 +506,36 @@ test('room: an emote goes to everyone else, not back to the sender; garbage is b
 
 // ---- zones: venues share the room, each sees only its own zone ----
 import { WORLD_HUB_TRACK, ZONE_RE, parseZone } from '../src/world.js';
-import { RACE_TRACKS } from '../src/race-tracks.js';
+import { RACE_TRACKS, TRACK_IDS } from '../src/race-tracks.js';
 
 test('zones: parseZone keeps a short lower-case slug, anything else is hub', () => {
-  assert.equal(parseZone('lagoon-v1'), 'lagoon-v1'); assert.equal(parseZone('hub'), 'hub'); assert.equal(parseZone('a'.repeat(16)), 'a'.repeat(16));
-  for (const bad of [undefined, null, '', 'Bad Zone!', 'Lagoon', 'a'.repeat(17), 7, {}, ['lagoon']]) assert.equal(parseZone(bad), 'hub', JSON.stringify(bad));
+  const ids = ['realfi-v1', 'lagoon-v1'];
+  assert.equal(parseZone('lagoon-v1', ids), 'lagoon-v1'); assert.equal(parseZone('hub', ids), 'hub'); assert.equal(parseZone('realfi-v1'), 'realfi-v1');
+  for (const bad of [undefined, null, '', 'Bad Zone!', 'Lagoon', 'a'.repeat(17), 7, {}, ['lagoon']]) assert.equal(parseZone(bad, ids), 'hub', JSON.stringify(bad));
   assert.ok(ZONE_RE.test('lagoon-v1'));
+  // only the hub or a registry key is a zone: a made-up slug cannot put text on everyone's sheet
+  assert.equal(parseZone('evil-zone', ids), 'hub'); assert.equal(parseZone('evil-zone'), 'hub'); assert.equal(parseZone('lagoon-v1'), 'hub', 'not in the registry today');
+  assert.ok(TRACK_IDS.includes('realfi-v1'));
 });
 
 test('zones: hi carries a zone, bad or missing zones are hub, counts are per zone', () => {
   const r = room();
-  hi(r, 'a', 'A', 0, { zone: 'lagoon-v1' }); hi(r, 'b', 'B', 0);
+  hi(r, 'a', 'A', 0, { zone: 'realfi-v1' }); hi(r, 'b', 'B', 0);
   const { out } = hi(r, 'c', 'C', 0, { zone: 'Bad Zone!' });
   const ok = to(out, 'c').find(m => m.t === 'ok');
-  assert.deepEqual(ok.zones, { hub: 2, 'lagoon-v1': 1 });
-  assert.deepEqual(Object.fromEntries(ok.peers.map(p => [p.id, p.zone])), { a: 'lagoon-v1', b: 'hub' });
-  assert.deepEqual(to(out, 'a'), [{ t: 'join', id: 'c', name: 'C', colour: ok.colour, zone: 'hub' }, { t: 'n', online: 3, zones: { hub: 2, 'lagoon-v1': 1 } }]);
+  assert.deepEqual(ok.zones, { hub: 2, 'realfi-v1': 1 });
+  assert.deepEqual(Object.fromEntries(ok.peers.map(p => [p.id, p.zone])), { a: 'realfi-v1', b: 'hub' });
+  assert.deepEqual(to(out, 'a'), [{ t: 'join', id: 'c', name: 'C', colour: ok.colour, zone: 'hub' }, { t: 'n', online: 3, zones: { hub: 2, 'realfi-v1': 1 } }]);
   assert.deepEqual(to(out, 'b').map(m => m.t), ['join', 'n']);
   assert.equal(r.players.get('c').zone, 'hub');
   // leave and kick carry the counts too
-  assert.deepEqual(to(r.close('b').out, 'a'), [{ t: 'leave', id: 'b' }, { t: 'n', online: 2, zones: { hub: 1, 'lagoon-v1': 1 } }]);
-  assert.deepEqual(to(r.kick({ name: 'C' }, 5, 0).out, 'a'), [{ t: 'leave', id: 'c' }, { t: 'n', online: 1, zones: { 'lagoon-v1': 1 } }]);
+  assert.deepEqual(to(r.close('b').out, 'a'), [{ t: 'leave', id: 'b' }, { t: 'n', online: 2, zones: { hub: 1, 'realfi-v1': 1 } }]);
+  assert.deepEqual(to(r.kick({ name: 'C' }, 5, 0).out, 'a'), [{ t: 'leave', id: 'c' }, { t: 'n', online: 1, zones: { 'realfi-v1': 1 } }]);
 });
 
 test('zones: snapshots go to the mover\'s zone only; movers in two zones make two snapshots', () => {
   const r = room();
-  hi(r, 'a', 'A'); hi(r, 'b', 'B', 0, { zone: 'lagoon-v1' }); hi(r, 'c', 'C', 0, { zone: 'lagoon-v1' });
+  hi(r, 'a', 'A'); hi(r, 'b', 'B', 0, { zone: 'realfi-v1' }); hi(r, 'c', 'C', 0, { zone: 'realfi-v1' });
   // a hub-only mover: the hub hears it, the lagoon hears nothing
   const first = pose(r, 'a', 0);
   assert.deepEqual(snaps(first.out).map(([id]) => id), ['a']);
@@ -549,24 +553,24 @@ test('zones: snapshots go to the mover\'s zone only; movers in two zones make tw
 
 test('zones: emotes stay in the zone', () => {
   const r = room();
-  hi(r, 'a', 'A'); hi(r, 'b', 'B', 0, { zone: 'lagoon-v1' }); hi(r, 'c', 'C', 0, { zone: 'lagoon-v1' });
+  hi(r, 'a', 'A'); hi(r, 'b', 'B', 0, { zone: 'realfi-v1' }); hi(r, 'c', 'C', 0, { zone: 'realfi-v1' });
   assert.deepEqual(r.onMessage('b', JSON.stringify({ t: 'emote', e: 2 }), 1000).out, [['c', { t: 'emote', id: 'b', e: 2 }]]);
   assert.deepEqual(r.onMessage('a', JSON.stringify({ t: 'emote', e: 1 }), 1000).out, [], 'alone in the hub: nobody to tell');
 });
 
 test('zones: who reports zones; the attachment keeps a venue zone through a wake-up', () => {
-  const r = room(); hi(r, 'a', 'A'); hi(r, 'b', 'B', 0, { zone: 'lagoon-v1' });
-  assert.deepEqual(r.who().map(w => [w.id, w.zone]), [['a', 'hub'], ['b', 'lagoon-v1']]);
-  assert.equal(r.attachment('b').zone, 'lagoon-v1');
+  const r = room(); hi(r, 'a', 'A'); hi(r, 'b', 'B', 0, { zone: 'realfi-v1' });
+  assert.deepEqual(r.who().map(w => [w.id, w.zone]), [['a', 'hub'], ['b', 'realfi-v1']]);
+  assert.equal(r.attachment('b').zone, 'realfi-v1');
   const r2 = room(); r2.restore(['a', 'b'].map(id => r.attachment(id)));
-  assert.deepEqual(r2.zones(), { hub: 1, 'lagoon-v1': 1 });
+  assert.deepEqual(r2.zones(), { hub: 1, 'realfi-v1': 1 });
   assert.deepEqual(snaps(pose(r2, 'b', 5000).out).map(([id]) => id), ['b']);
   r2.restore([{ id: 'x', name: 'X', colour: '#fff', ipKey: 'kx', since: 0, zone: 'NOT OK' }]);
   assert.equal(r2.players.get('x').zone, 'hub');
 });
 
 test('zones: race.open and race.join from a venue are refused with the note; the race is untouched', () => {
-  const r = room(); hi(r, 'a', 'A'); hi(r, 'b', 'B', 0, { zone: 'lagoon-v1' });
+  const r = room(); hi(r, 'a', 'A'); hi(r, 'b', 'B', 0, { zone: 'realfi-v1' });
   const refused = [['b', { t: 'err', error: 'race_zone', why: 'Live races run at the Raceway for now' }]];
   const open = r.onMessage('b', JSON.stringify({ t: 'race.open' }), 1000);
   assert.deepEqual(open, { out: refused }); assert.equal(r.race, null);
@@ -583,7 +587,7 @@ test('RACE_CHECKPOINTS comes from the registry', () => {
 });
 
 test('zones: a venue pose beyond the world radius is rejected like any other', () => {
-  const r = room(); hi(r, 'b', 'B', 0, { zone: 'lagoon-v1' });
+  const r = room(); hi(r, 'b', 'B', 0, { zone: 'realfi-v1' });
   assert.equal(pose(r, 'b', 0, { x: 400, z: 0 }).close, undefined);
   assert.equal(r.players.get('b').pose.x, 400);
   assert.deepEqual(pose(r, 'b', 100, { x: 401 }), { out: [] });
@@ -631,12 +635,12 @@ test('dedupe across a wake-up: the roster rebuilt from attachments keeps devices
 });
 
 test('zones: live-race traffic is hub only; a venue player hears none of a hub race and joins with race null', () => {
-  const r = room(); hi(r, 'p0', 'P0'); hi(r, 'p1', 'P1'); hi(r, 'v', 'V', 0, { zone: 'lagoon-v1' });
+  const r = room(); hi(r, 'p0', 'P0'); hi(r, 'p1', 'P1'); hi(r, 'v', 'V', 0, { zone: 'realfi-v1' });
   const heard = [];
   const keep = res => { heard.push(...to(res.out, 'v')); return res; };
   keep(raceMsg(r, 'p0', { t: 'race.open' }, 0)); keep(raceMsg(r, 'p1', { t: 'race.join' }, 1));
   keep(r.timers(17_000)); keep(r.timers(20_000));
-  const late = hi(r, 'v2', 'V2', 20_500, { zone: 'lagoon-v1' });
+  const late = hi(r, 'v2', 'V2', 20_500, { zone: 'realfi-v1' });
   assert.equal(to(late.out, 'v2').find(m => m.t === 'ok').race, null);
   const hubLate = hi(r, 'h', 'H', 20_600);
   assert.equal(to(hubLate.out, 'h').find(m => m.t === 'ok').race.state, 'running', 'a hub joiner still sees the race');

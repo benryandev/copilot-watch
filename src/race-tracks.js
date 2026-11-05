@@ -23,6 +23,8 @@ export function openTracks(json) {
   return out;
 }
 export const RACE_TRACKS = openTracks(tracks);
+/** Every key of the registry, open or not: a venue page for a track that has no ranked floor yet can still join its zone. */
+export const TRACK_IDS = Object.freeze(Object.keys(tracks));
 export function raceTrack(id) { return Object.hasOwn(RACE_TRACKS, id) ? RACE_TRACKS[id] : null; }
 /** Slowest lap kept: 30 minutes. */
 export const RACE_MAX_MS = 30 * 60 * 1000;

@@ -130,13 +130,13 @@ test('World /presence reports online, zones and version; a wake-up keeps each so
   w.room.open('a', { ipKey: 'k' }, 0); w.sockets.set('a', a);
   w.room.open('b', { ipKey: 'k2' }, 0); w.sockets.set('b', b);
   await w.webSocketMessage(a, JSON.stringify({ t: 'hi', v: 1, name: 'Aveli' }));
-  await w.webSocketMessage(b, JSON.stringify({ t: 'hi', v: 1, name: 'Nova', zone: 'lagoon-v1' }));
-  assert.deepEqual(await (await w.fetch(new Request('https://w/presence'))).json(), { online: 2, zones: { hub: 1, 'lagoon-v1': 1 }, version: WORLD_VERSION });
-  assert.equal(b.deserializeAttachment().zone, 'lagoon-v1');
+  await w.webSocketMessage(b, JSON.stringify({ t: 'hi', v: 1, name: 'Nova', zone: 'realfi-v1' }));
+  assert.deepEqual(await (await w.fetch(new Request('https://w/presence'))).json(), { online: 2, zones: { hub: 1, 'realfi-v1': 1 }, version: WORLD_VERSION });
+  assert.equal(b.deserializeAttachment().zone, 'realfi-v1');
   const w2 = new World(fakeCtx([a, b]), { KV: memKV(), RACE_ADMIN_TOKEN: 'x' });
   await w2.ready;
-  assert.deepEqual(w2.room.who().map(p => [p.name, p.zone]), [['Aveli', 'hub'], ['Nova', 'lagoon-v1']]);
-  assert.deepEqual((await (await w2.fetch(new Request('https://w/presence'))).json()).zones, { hub: 1, 'lagoon-v1': 1 });
+  assert.deepEqual(w2.room.who().map(p => [p.name, p.zone]), [['Aveli', 'hub'], ['Nova', 'realfi-v1']]);
+  assert.deepEqual((await (await w2.fetch(new Request('https://w/presence'))).json()).zones, { hub: 1, 'realfi-v1': 1 });
 });
 
 test('World closes the older socket with 4001 dup when the same device joins again', async () => {

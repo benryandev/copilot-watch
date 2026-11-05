@@ -1,7 +1,7 @@
 // The world room for the ecosystem map's multiplayer: who's driving, where, under what name.
 // Pure logic, no Cloudflare types; the Durable Object shell in world-worker.js wires it to websockets.
 import { cleanName, parseDevice } from './race.js';
-import { raceTrack } from './race-tracks.js';
+import { raceTrack, TRACK_IDS } from './race-tracks.js';
 
 export const WORLD_VERSION = '2026-11-02.3'; // bumped on deploy so /presence shows which code the room runs
 export const WORLD_OFF_KEY = 'world:off'; // any value under this KV key pauses new connections and closes live ones
@@ -105,7 +105,8 @@ if (!hubTrack) throw new Error(`world: the hub track ${WORLD_HUB_TRACK} is not o
 export const RACE_CHECKPOINTS = hubTrack.checkpoints.length;
 // ── Zones: the hub and each venue page share the room, but see and hear only their own zone ──
 export const ZONE_RE = /^[a-z0-9-]{1,16}$/;
-export const parseZone = (z) => (typeof z === 'string' && ZONE_RE.test(z) ? z : 'hub');
+/** A zone is `hub` or a key of src/tracks.json (open or not); anything else is the hub. `ids` is a test seam. */
+export const parseZone = (z, ids = TRACK_IDS) => (typeof z === 'string' && ZONE_RE.test(z) && (z === 'hub' || ids.includes(z)) ? z : 'hub');
 const RACE_ZONE_ERR = { t: 'err', error: 'race_zone', why: 'Live races run at the Raceway for now' };
 // One socket per device: a device joining again (a second tab, a reload before the old socket died) closes the older one
 const DUP_ERR = { t: 'err', error: 'dup', why: 'This device is driving in another tab' };
