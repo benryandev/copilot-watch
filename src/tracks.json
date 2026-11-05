@@ -2,19 +2,22 @@
   "lagoon-v1": {
     "name": "The Lagoon",
     "checkpoints": [
-      146,
-      182,
-      263,
-      302,
-      398,
-      462,
-      528,
-      580,
-      606,
-      646,
-      676
+      156,
+      202,
+      247,
+      365,
+      433,
+      495,
+      563,
+      633,
+      671,
+      711,
+      741
     ],
-    "length": 779
+    "length": 844,
+    "minMs": 28585,
+    "maxSpeed": 30.9,
+    "segMaxSpeed": 35.6
   },
   "realfi-v1": {
     "name": "RealFi Raceway",
