@@ -1,0 +1,17 @@
+{
+  "realfi-v1": {
+    "name": "RealFi Raceway",
+    "checkpoints": [
+      211,
+      300,
+      420,
+      500,
+      550
+    ],
+    "length": 642,
+    "minMs": 22138,
+    "maxSpeed": 29,
+    "segMaxSpeed": 36,
+    "note": "pinned to the worker constants of 1 Nov 2026 until the optimiser-derived limits are adopted"
+  }
+}
