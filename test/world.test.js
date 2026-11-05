@@ -282,6 +282,9 @@ test('room: announce broadcasts a record to everyone joined; bad payloads are re
   assert.equal(ok, true);
   assert.deepEqual(out.map(([id]) => id).sort(), ['a', 'b']);
   assert.deepEqual(out[0][1], { t: 'record', name: 'BigBaws', ms: 24778, track: 'realfi-v1' });
+  const named = r.announce({ t: 'record', track: 'realfi-v1', trackName: 'RealFi Raceway', name: 'A', ms: 23000 });
+  assert.deepEqual(named.out[0][1], { t: 'record', name: 'A', ms: 23000, track: 'realfi-v1', trackName: 'RealFi Raceway' });
+  for (const trackName of ['x'.repeat(60), 7]) assert.equal('trackName' in r.announce({ t: 'record', track: 'realfi-v1', trackName, name: 'A', ms: 23000 }).out[0][1], false, 'a bad trackName is omitted');
   for (const bad of [null, {}, { t: 'record', name: '', ms: 1 }, { t: 'record', name: 'x', ms: -1 }, { t: 'record', name: 'x'.repeat(21), ms: 1 }, { t: 'nope', name: 'x', ms: 1 }]) {
     const b = r.announce(bad); assert.equal(b.ok, false, JSON.stringify(bad)); assert.equal(b.out.length, 0);
   }

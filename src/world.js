@@ -399,7 +399,8 @@ export class Room {
     const name = typeof m.name === 'string' ? m.name.trim() : '';
     const ms = Number(m.ms), track = typeof m.track === 'string' ? m.track.slice(0, 40) : '';
     if (!name || name.length > 20 || !Number.isFinite(ms) || ms <= 0) return { ok: false, out: [] };
-    return { ok: true, out: this.broadcast({ t: 'record', name, ms: Math.round(ms), track }) };
+    const trackName = typeof m.trackName === 'string' && m.trackName.length <= 40 ? m.trackName : null;
+    return { ok: true, out: this.broadcast({ t: 'record', name, ms: Math.round(ms), track, ...(trackName ? { trackName } : {}) }) };
   }
 
   /** For the admin: who's here (no addresses). */

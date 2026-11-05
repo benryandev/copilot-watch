@@ -1,6 +1,7 @@
 import test from 'node:test'; import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs'; import { resolve } from 'node:path';
 import { RACE_TRACKS, raceTrack, openTracks } from '../src/race-tracks.js';
+import registry from '../src/tracks.json' with { type: 'json' };
 // src/tracks.json is a copy; edits belong in copilot-check (then `pnpm sync-tracks`).
 test('the registry is read from src/tracks.json and the Raceway is pinned to the 1 Nov constants', () => {
   assert.deepEqual(RACE_TRACKS['realfi-v1'], { name: 'RealFi Raceway', checkpoints: [211, 300, 420, 500, 550], length: 642, minMs: 22138, maxSpeed: 29, segMaxSpeed: 36 });
@@ -16,6 +17,9 @@ test('a track without limits is not open: it is absent from RACE_TRACKS and race
   }
   assert.deepEqual(Object.keys(openTracks({ a: { ...full, checkpoints: [20, 10] }, b: { ...full, checkpoints: [10, 30] }, c: { ...full, maxSpeed: 0 }, d: { ...full, length: 30.5 } })), []);
   assert.equal(raceTrack('toString'), null);
+});
+test('every key in src/tracks.json is open (a broken sync fails here rather than making a track vanish)', () => {
+  assert.deepEqual(Object.keys(RACE_TRACKS), Object.keys(registry));
 });
 test('sanity: checkpoints increasing and inside the lap, minMs at most length / maxSpeed × 1000 × 1.05', () => {
   for (const [id, t] of Object.entries(RACE_TRACKS)) {

@@ -1,14 +1,14 @@
 import test from 'node:test'; import assert from 'node:assert/strict';
 import { handleRaceApi, parseTime, parseTrace, isRude, cleanName, hashHex, RACE_ORIGINS, RACE_KEEP, RACE_SHOW, RACE_ADMIN_HEADER, RACE_TRACE_MAX, RACE_MAX_BODY, RACE_RATE_SEC, RACE_RATE_BURST, RACE_ADDR_ROWS } from '../src/race.js';
-import { RACE_TRACKS, RACE_MAX_SPEED, RACE_SEG_MAX_SPEED, RACE_MAX_MS } from '../src/race-tracks.js';
+import { RACE_TRACKS, RACE_MAX_MS } from '../src/race-tracks.js';
 import handler from '../src/worker.js';
 import { memKV } from './kv-mem.js';
 
 // Every expected time below comes from the track constant, so swapping in the real track numbers needs no test changes.
 const TRACK = 'realfi-v1', T = RACE_TRACKS[TRACK], O = RACE_ORIGINS[0], NOW = Date.UTC(2026, 9, 30), ADMIN = 'test-admin-token-1234';
-const minMs = m => (m * 1000) / RACE_MAX_SPEED;
-const segMs = m => (m * 1000) / RACE_SEG_MAX_SPEED; // a single segment's floor (looser than the lap's)
-/** A clean lap at `speed` m/s (well under RACE_MAX_SPEED). */
+const minMs = m => (m * 1000) / T.maxSpeed;
+const segMs = m => (m * 1000) / T.segMaxSpeed; // a single segment's floor (looser than the lap's)
+/** A clean lap at `speed` m/s (well under T.maxSpeed). */
 const lap = (speed = 20) => ({ splits: T.checkpoints.map(d => Math.round((d * 1000) / speed)), ms: Math.round((T.length * 1000) / speed) });
 // Every real client sends a trace; a post without a valid one is refused (1 Nov 2026), so the default body carries one
 const good = (over = {}) => { const b = { track: TRACK, name: 'Ben', ...lap(), ...over }; if (!('trace' in over)) b.trace = traceFor({ ms: b.ms }, Math.max(100, Math.ceil(b.ms / 399 / 100) * 100)); return b; }; // thinned like the page for long laps
@@ -445,10 +445,10 @@ test('segments allow corner-cutting headroom; the whole lap still cannot beat th
   const r = await post(env(), good({ splits: quick, ms: L.ms }));
   assert.equal(r.status, 200, 'a 50 m segment at 34 m/s is a racing line, not a cheat');
   const tooQuick = [...L.splits];
-  tooQuick[4] = tooQuick[3] + Math.round((50 * 1000) / (RACE_SEG_MAX_SPEED + 1));
+  tooQuick[4] = tooQuick[3] + Math.round((50 * 1000) / (T.segMaxSpeed + 1));
   assert.equal(await err(await post(env(), good({ splits: tooQuick, ms: L.ms }))), 'segment_too_fast');
-  assert.equal(await err(await post(env(), good(lap(RACE_MAX_SPEED + 0.5)))), 'lap_too_fast');
-  assert.ok(RACE_SEG_MAX_SPEED > RACE_MAX_SPEED);
+  assert.equal(await err(await post(env(), good(lap(T.maxSpeed + 0.5)))), 'lap_too_fast');
+  assert.ok(T.segMaxSpeed > T.maxSpeed);
 });
 
 // The last sample lands on the line a few ms after the previous one; positions are rounded to 0.1 m, so a 0.2 m step in
@@ -473,11 +473,25 @@ test('a new #1 is announced to the world room through the WORLD binding; other p
   assert.equal(calls.length, 1);
   assert.equal(new URL(calls[0].url).pathname, '/announce');
   assert.equal(calls[0].init.headers[RACE_ADMIN_HEADER], ADMIN);
-  assert.deepEqual(JSON.parse(calls[0].init.body), { t: 'record', track: TRACK, name: 'Aveli', ms: lap(20).ms });
+  assert.deepEqual(JSON.parse(calls[0].init.body), { t: 'record', track: TRACK, trackName: T.name, name: 'Aveli', ms: lap(20).ms });
   r = await handleRaceApi(req('POST', '/race/time', { ip: freshIp(), body: good({ name: 'Rook', ...lap(19) }) }), e, { now: NOW + 20_000, ...opts });
   assert.equal((await r.json()).rank, 2);
   await Promise.all(waits);
   assert.equal(calls.length, 1, 'second place is not announced');
   r = await handleRaceApi(req('POST', '/race/time', { ip: freshIp(), body: good({ name: 'Juno', ...lap(22) }) }), env(), { now: NOW + 40_000 });
   assert.equal((await r.json()).rank, 1, 'a post without the binding still succeeds');
+});
+
+test('limits come from the entry: a lap under minMs is refused, one at minMs accepted', async () => {
+  const at = ms => ({ ms, splits: T.checkpoints.map(d => Math.round((d / T.length) * ms)) });
+  assert.equal(await err(await post(env(), good(at(T.minMs - 1)))), 'lap_too_fast');
+  assert.equal((await post(env(), good(at(T.minMs)))).status, 200);
+});
+
+test('a track that is not open is unknown_track on post, top and ghost', async () => {
+  assert.equal(await err(await post(env(), good({ track: 'x-v1' }))), 'unknown_track');
+  for (const path of ['top', 'ghost']) {
+    const r = await handleRaceApi(req('GET', `/race/${path}?track=x-v1`), env());
+    assert.equal(r.status, 404); assert.equal(await err(r), 'unknown_track');
+  }
 });

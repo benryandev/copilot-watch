@@ -24,8 +24,5 @@ export function openTracks(json) {
 }
 export const RACE_TRACKS = openTracks(tracks);
 export function raceTrack(id) { return Object.hasOwn(RACE_TRACKS, id) ? RACE_TRACKS[id] : null; }
-// Transitional: the next task moves race.js and its tests onto the entry fields and removes these two.
-export const RACE_MAX_SPEED = raceTrack('realfi-v1').maxSpeed;
-export const RACE_SEG_MAX_SPEED = raceTrack('realfi-v1').segMaxSpeed;
 /** Slowest lap kept: 30 minutes. */
 export const RACE_MAX_MS = 30 * 60 * 1000;
