@@ -75,7 +75,7 @@ State lives in Workers KV. `core/` (HTTP with backoff, Strike and Hyperliquid cl
 
 ## Race leaderboard
 
-A track takes ranked laps only when its registry entry carries all of `checkpoints`, `length`, `minMs`, `maxSpeed` and `segMaxSpeed`. Any other id answers `unknown_track`, so an absent limit never means no limit. Best lap per name for the RealFi racetrack in the ecosystem game (`src/race.js`; the track registry is `src/tracks.json`, a copy of copilot-check `ecosystem/tracks/tracks.json` made by `pnpm sync-tracks`; `src/race-tracks.js` reads it). CORS is limited to `https://strike.benryan.com.au` and `http://localhost:8766`.
+A track takes ranked laps only when its registry entry carries all of `checkpoints`, `length`, `minMs`, `maxSpeed` and `segMaxSpeed`. An id the registry does not hold, or holds without all five fields, answers `unknown_track`, so an absent limit never means no limit. Best lap per name for the RealFi racetrack in the ecosystem game (`src/race.js`; the track registry is `src/tracks.json`, a copy of copilot-check `ecosystem/tracks/tracks.json` made by `pnpm sync-tracks`; `src/race-tracks.js` reads it). CORS is limited to `https://strike.benryan.com.au` and `http://localhost:8766`.
 
 | Endpoint | What it does |
 |---|---|
@@ -169,18 +169,24 @@ A second worker in this repo, `copilot-world` (`wrangler.world.toml`, entry `src
 
 | Route | What |
 |---|---|
-| `GET /ws` (websocket) | The room. Same origins as the race API; refused with 503 `off` while the KV key `world:off` exists. Frames are small JSON.
+| `GET /ws` (websocket) | The room. Same origins as the race API; refused with 503 `off` while the KV key `world:off` exists.  Frames are described below the table.
+| `GET /presence` | `{online, zones, version}`, public, CORS for the race origins. |
+| `GET /who` | Admin (`x-race-admin`): `{online, who: [{id, name, colour, x, z, since}]}`. Never addresses. |
+| `POST /kick` | Admin: `{id?, name?, minutes = 60}` closes matching sockets and blocks that session and address hash for the period. |
+| `POST /restart` | Admin: resets the room object so it picks up the latest deploy (a busy object otherwise keeps old code; everyone reconnects within a second). `GET /presence` shows `version` so you can tell. `pnpm run deploy:world` does this for you; `pnpm run restart:world` on its own. |
+
+**Room protocol.** Frames are small JSON.
+
 Client: `hi {name?, owner?, zone?, device?}`, `p {x, z, h, s, j?}` (10 Hz moving, 1 Hz still), `name {name}`, `ping {echo}`, plus the `race.*` frames.
+
 Server: `ok {id, name, colour, now, peers, zones, race}`, `s {now, p: [[id, x, z, h, s, j], …]}` at most every 100 ms, `join {id, name, colour, zone}`, `leave`, `rename`, `n {online, zones}`, `named`, `record {name, ms, track, trackName}`, `pong`, `err {error, why?}`.
+
 Poses outside 400 m of the origin, over 256 bytes or faster than 20 a second are dropped; three bad frames in a row close the socket; 4 sockets per address (checked at open, before any `hi` can dedupe, so a fifth tab from one address is refused with `ip` until the reaper clears a stale socket, up to 60 s); 200 in the room.
 
 - **`zone`** is set once, on `hi`, and is `hub` or a key of `src/tracks.json` (open or not, so a venue page can join before its track opens). Anything else is `hub`, as is a missing zone, so old clients are hub players. A player gets `s`, `join`, `leave` and `rename` for their own zone only. `ok.peers[].zone` and `join.zone` carry the zone, and `ok.zones` and `n.zones` carry the joined count per zone (`{hub: 2, "realfi-v1": 1}`, empty zones left out). `online` stays the whole room.
 - **`device`** is a 32-hex token the browser keeps in local storage. It is never broadcast or logged. A second `hi` with the same device closes the older socket: it first gets `err {error: "dup", why}`, then `close(4001, "dup")`. **A client must not reconnect after a 4001 `dup` close** (or an `err dup`): the other tab would reconnect and close this one, for ever. A missing or malformed device dedupes nothing.
 - **Races are hub-only.** Every `race.*` broadcast goes to hub players, `ok.race` is `null` for a venue, and `race.open` or `race.join` from a venue is refused with `err {error: "race_zone", why}`.
 - **`record`** announces a new #1 to every zone, with `track` (the id) and `trackName` (from the registry).
-| `GET /who` | Admin (`x-race-admin`): `{online, who: [{id, name, colour, x, z, since}]}`. Never addresses. |
-| `POST /kick` | Admin: `{id?, name?, minutes = 60}` closes matching sockets and blocks that session and address hash for the period. |
-| `POST /restart` | Admin: resets the room object so it picks up the latest deploy (a busy object otherwise keeps old code; everyone reconnects within a second). `GET /presence` shows `version` so you can tell. `pnpm run deploy:world` does this for you; `pnpm run restart:world` on its own. |
 
 Names go through the leaderboard's `cleanName`/`isRude`, then a reserved list (just `BenRyan`, Ben's own handle, since 31 Oct; any other Ben or Shan may be themselves): anything refused becomes `Driver NN`; two live players asking for the same name get `Name` and `Name (2)`. The owner token (`WORLD_OWNER_TOKEN` secret, sent as `owner` in `hi` or `name`) unlocks every reserved name; a guest token (`WORLD_GUEST_TOKENS` secret, JSON `{"<token>": ["Shan"]}`) unlocks only the names listed against it. The page stores either from `#owner=<token>` in the URL, so a person can be sent a link. Rotate by changing the secret. Secrets: `pnpm dlx wrangler@4 secret put RACE_ADMIN_TOKEN -c wrangler.world.toml` and the same for `WORLD_OWNER_TOKEN`.
 
