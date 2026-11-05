@@ -18,8 +18,15 @@ test('a track without limits is not open: it is absent from RACE_TRACKS and race
   assert.deepEqual(Object.keys(openTracks({ a: { ...full, checkpoints: [20, 10] }, b: { ...full, checkpoints: [10, 30] }, c: { ...full, maxSpeed: 0 }, d: { ...full, length: 30.5 } })), []);
   assert.equal(raceTrack('toString'), null);
 });
-test('every key in src/tracks.json is open (a broken sync fails here rather than making a track vanish)', () => {
-  assert.deepEqual(Object.keys(RACE_TRACKS), Object.keys(registry));
+// An unopened track (no limits yet: its floor is not recorded) is a legitimate registry entry since the Lagoon (5 Nov 2026)
+test('every key in src/tracks.json is a sane entry, and realfi-v1 is open (a broken sync fails here rather than making a track vanish)', () => {
+  for (const [id, e] of Object.entries(registry)) {
+    assert.ok(typeof e.name === 'string' && e.name.length > 0, `${id} name`);
+    assert.ok(Number.isInteger(e.length) && e.length > 0, `${id} length`);
+    assert.ok(Array.isArray(e.checkpoints) && e.checkpoints.length > 0 && e.checkpoints.every((c, i) => Number.isInteger(c) && c > 0 && c < e.length && (i === 0 || c > e.checkpoints[i - 1])), `${id} checkpoints`);
+  }
+  assert.ok(Object.hasOwn(RACE_TRACKS, 'realfi-v1'), 'the Raceway is open');
+  for (const id of Object.keys(RACE_TRACKS)) assert.ok(Object.hasOwn(registry, id), id);
 });
 test('sanity: checkpoints increasing and inside the lap, minMs at most length / maxSpeed × 1000 × 1.05', () => {
   for (const [id, t] of Object.entries(RACE_TRACKS)) {
@@ -30,7 +37,7 @@ test('sanity: checkpoints increasing and inside the lap, minMs at most length / 
 test("src/tracks.json matches the site's copy (skipped when no sibling checkout is present)", (t) => {
   const root = resolve(import.meta.dirname, '..');
   const c = [process.env.CHECK_DIR && resolve(process.env.CHECK_DIR, 'ecosystem/tracks/tracks.json'),
-    resolve(root, '../copilot-check-registry/ecosystem/tracks/tracks.json'), resolve(root, '../copilot-check/ecosystem/tracks/tracks.json')].filter(Boolean);
+    resolve(root, '../copilot-check-venue/ecosystem/tracks/tracks.json'), resolve(root, '../copilot-check-registry/ecosystem/tracks/tracks.json'), resolve(root, '../copilot-check/ecosystem/tracks/tracks.json')].filter(Boolean);
   const sib = c.find(existsSync);
   if (!sib) return t.skip('no copilot-check checkout beside this one');
   assert.equal(readFileSync(resolve(root, 'src/tracks.json'), 'utf8'), readFileSync(sib, 'utf8'));
