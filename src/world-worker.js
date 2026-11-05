@@ -181,6 +181,8 @@ export class World {
     // Stored on first hi, on every rename, and every 30 s of messages (so the last-heard time survives hibernation)
     if (a && (cur?.name !== a.name || a.heardAt - (cur?.heardAt ?? 0) > 30_000)) ws.serializeAttachment(a);
     if (res.flushIn) this.flushLater(res.flushIn);
+    // The same device joined again: the room already dropped the older player and told its socket why; close it with a code the client can read
+    for (const o of res.closeOthers ?? []) { try { this.sockets.get(o.id)?.close(4001, o.reason); } catch { /* gone */ } this.sockets.delete(o.id); }
     if (res.close) { const c = this.room.close(id); this.deliver(c.out); this.sockets.delete(id); ws.close(1008, res.close); if (c.raceChanged) await this.raceChanged(); }
     if (res.raceChanged) await this.raceChanged();
   }

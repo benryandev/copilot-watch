@@ -138,3 +138,19 @@ test('World /presence reports online, zones and version; a wake-up keeps each so
   assert.deepEqual(w2.room.who().map(p => [p.name, p.zone]), [['Aveli', 'hub'], ['Nova', 'lagoon-v1']]);
   assert.deepEqual((await (await w2.fetch(new Request('https://w/presence'))).json()).zones, { hub: 1, 'lagoon-v1': 1 });
 });
+
+test('World closes the older socket with 4001 dup when the same device joins again', async () => {
+  const w = new World(fakeCtx(), { KV: memKV(), RACE_ADMIN_TOKEN: 'x' });
+  await w.ready;
+  const D = '0123456789abcdef0123456789abcdef';
+  const a = fakeWs({ id: 'a', ipKey: 'k', since: 0 }), b = fakeWs({ id: 'b', ipKey: 'k', since: 0 });
+  w.room.open('a', { ipKey: 'k' }, 0); w.sockets.set('a', a);
+  w.room.open('b', { ipKey: 'k' }, 0); w.sockets.set('b', b);
+  await w.webSocketMessage(a, JSON.stringify({ t: 'hi', v: 1, name: 'Aveli', device: D }));
+  assert.equal(a.deserializeAttachment().device, D, 'the attachment carries the device');
+  await w.webSocketMessage(b, JSON.stringify({ t: 'hi', v: 1, name: 'Aveli', device: D }));
+  assert.deepEqual(a.closed, [4001, 'dup']); assert.equal(b.closed, null);
+  assert.deepEqual(a.sent.at(-1), { t: 'err', error: 'dup', why: 'This device is driving in another tab' });
+  assert.equal(w.sockets.has('a'), false);
+  assert.equal((await (await w.fetch(new Request('https://w/presence'))).json()).online, 1);
+});

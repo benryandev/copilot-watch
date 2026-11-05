@@ -591,3 +591,58 @@ test('zones: a venue pose beyond the world radius is rejected like any other', (
   assert.deepEqual(pose(r, 'b', 300, { x: 401 }), { out: [], close: 'bad' });
   assert.equal(r.players.get('b').pose.x, 400, 'the bad poses never landed');
 });
+
+// ---- device dedupe: one socket per device ----
+const D = '0123456789abcdef0123456789abcdef', D2 = 'fedcba9876543210fedcba9876543210';
+const DUP = { t: 'err', error: 'dup', why: 'This device is driving in another tab' };
+
+test('dedupe: the same device joining again closes the older socket, the count never shows two', () => {
+  const r = room(); hi(r, 'c', 'Other', 0);
+  hi(r, 'a', 'Aveli', 0, { device: D });
+  const res = hi(r, 'b', 'Aveli', 10, { device: D.toUpperCase() });
+  assert.deepEqual(res.closeOthers, [{ id: 'a', reason: 'dup' }], 'the older socket is the one closed');
+  assert.deepEqual(to(res.out, 'a'), [DUP], 'the old socket hears why, and nothing else');
+  assert.equal(r.online(), 2); assert.equal(r.players.has('a'), false);
+  const ok = to(res.out, 'b').find(m => m.t === 'ok');
+  assert.deepEqual(ok.peers.map(p => p.id), ['c'], 'the new tab does not see its old self');
+  assert.equal(ok.name, 'Aveli', 'the old name is free again');
+  const cMsgs = to(res.out, 'c');
+  assert.deepEqual(cMsgs.filter(m => m.t === 'leave'), [{ t: 'leave', id: 'a' }]);
+  assert.deepEqual(cMsgs.filter(m => m.t === 'n'), [{ t: 'n', online: 2, zones: { hub: 2 } }], 'one count, after the dedupe');
+  assert.equal(r.attachment('b').device, D);
+});
+
+test('dedupe: no device, a malformed device, or two different devices never close anything', () => {
+  const none = room(); hi(none, 'a', 'A'); const r1 = hi(none, 'b', 'B');
+  assert.equal(r1.closeOthers, undefined); assert.equal(none.online(), 2); assert.equal('device' in none.attachment('a'), false);
+  const bad = room(); hi(bad, 'a', 'A', 0, { device: 'not-a-token' }); const r2 = hi(bad, 'b', 'B', 0, { device: 'not-a-token' });
+  assert.equal(r2.closeOthers, undefined); assert.equal(bad.online(), 2);
+  const two = room(); hi(two, 'a', 'A', 0, { device: D }); const r3 = hi(two, 'b', 'B', 0, { device: D2 });
+  assert.equal(r3.closeOthers, undefined); assert.equal(two.online(), 2);
+});
+
+test('dedupe across a wake-up: the roster rebuilt from attachments keeps devices, so a rejoin still dedupes', () => {
+  const r0 = room(); hi(r0, 'a', 'Aveli', 0, { device: D });
+  const att = r0.attachment('a'); assert.equal(att.device, D);
+  const r = room(); r.restore([att], 100);
+  const res = hi(r, 'b', 'Aveli', 200, { device: D });
+  assert.deepEqual(res.closeOthers, [{ id: 'a', reason: 'dup' }]);
+  assert.deepEqual(to(res.out, 'a'), [DUP]); assert.equal(r.online(), 1);
+});
+
+test('zones: live-race traffic is hub only; a venue player hears none of a hub race and joins with race null', () => {
+  const r = room(); hi(r, 'p0', 'P0'); hi(r, 'p1', 'P1'); hi(r, 'v', 'V', 0, { zone: 'lagoon-v1' });
+  const heard = [];
+  const keep = res => { heard.push(...to(res.out, 'v')); return res; };
+  keep(raceMsg(r, 'p0', { t: 'race.open' }, 0)); keep(raceMsg(r, 'p1', { t: 'race.join' }, 1));
+  keep(r.timers(17_000)); keep(r.timers(20_000));
+  const late = hi(r, 'v2', 'V2', 20_500, { zone: 'lagoon-v1' });
+  assert.equal(to(late.out, 'v2').find(m => m.t === 'ok').race, null);
+  const hubLate = hi(r, 'h', 'H', 20_600);
+  assert.equal(to(hubLate.out, 'h').find(m => m.t === 'ok').race.state, 'running', 'a hub joiner still sees the race');
+  for (const id of ['p0', 'p1']) for (let i = 1; i <= RACE_CHECKPOINTS; i++) keep(raceMsg(r, id, { t: 'race.cp', i }, 21_000 + i * 1000 + (id === 'p1' ? 100 : 0)));
+  keep(raceMsg(r, 'p0', { t: 'race.fin', ms: 25_000 }, 45_000));
+  const end = keep(raceMsg(r, 'p1', { t: 'race.fin', ms: 25_100 }, 45_100));
+  assert.ok(to(end.out, 'p0').find(m => m.t === 'race.end'), 'the hub heard the end');
+  assert.deepEqual(heard.filter(m => String(m.t).startsWith('race.')), [], 'the venue heard none of it');
+});

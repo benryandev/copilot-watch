@@ -1,6 +1,6 @@
 // The world room for the ecosystem map's multiplayer: who's driving, where, under what name.
 // Pure logic, no Cloudflare types; the Durable Object shell in world-worker.js wires it to websockets.
-import { cleanName } from './race.js';
+import { cleanName, parseDevice } from './race.js';
 import { raceTrack } from './race-tracks.js';
 
 export const WORLD_VERSION = '2026-11-02.3'; // bumped on deploy so /presence shows which code the room runs
@@ -107,6 +107,8 @@ export const RACE_CHECKPOINTS = hubTrack.checkpoints.length;
 export const ZONE_RE = /^[a-z0-9-]{1,16}$/;
 export const parseZone = (z) => (typeof z === 'string' && ZONE_RE.test(z) ? z : 'hub');
 const RACE_ZONE_ERR = { t: 'err', error: 'race_zone', why: 'Live races run at the Raceway for now' };
+// One socket per device: a device joining again (a second tab, a reload before the old socket died) closes the older one
+const DUP_ERR = { t: 'err', error: 'dup', why: 'This device is driving in another tab' };
 // ── Emotes: a wave, a party, fire, a flag, a thumbs up (the page draws them; the room only relays an index) ──
 export const EMOTE_COUNT = 5;
 export const EMOTE_MAX_HZ = 2; // per socket per second; each one fans out to the room
@@ -149,14 +151,14 @@ export class Room {
     if (this.blocked('s:' + id, now) || this.blocked('i:' + ipKey, now)) return { ok: false, error: 'blocked' };
     if ([...this.players.values()].filter(p => p.ipKey === ipKey).length >= WORLD_IP_MAX) return { ok: false, error: 'ip' };
     if (this.players.size >= WORLD_MAX) return { ok: false, error: 'full' };
-    this.players.set(id, { id, ipKey, since: now, joined: false, name: null, colour: null, zone: 'hub', pose: null, times: [], pings: [], races: [], emotes: [], dropped: [], lastJump: -Infinity, bad: 0, renamedAt: -Infinity, lastMsg: now });
+    this.players.set(id, { id, ipKey, since: now, joined: false, name: null, colour: null, zone: 'hub', device: null, pose: null, times: [], pings: [], races: [], emotes: [], dropped: [], lastJump: -Infinity, bad: 0, renamedAt: -Infinity, lastMsg: now });
     return { ok: true };
   }
 
   /** What the shell stores on the socket so the roster survives hibernation. */
   attachment(id) {
     const p = this.players.get(id);
-    return p?.joined ? { id: p.id, name: p.name, colour: p.colour, ipKey: p.ipKey, since: p.since, heardAt: p.lastMsg, ...(p.zone !== 'hub' ? { zone: p.zone } : {}) } : null; // hub is the default, left out
+    return p?.joined ? { id: p.id, name: p.name, colour: p.colour, ipKey: p.ipKey, since: p.since, heardAt: p.lastMsg, ...(p.zone !== 'hub' ? { zone: p.zone } : {}), ...(p.device ? { device: p.device } : {}) } : null; // hub and no device are the defaults, left out
   }
 
   /** Rebuild joined players from stored attachments after a wake-up. */
@@ -164,7 +166,7 @@ export class Room {
     for (const e of entries) {
       if (!e?.id) continue;
       // Last heard is what the attachment says (refreshed every 30 s of messages), else when it joined: a wake-up must not make a dead socket look alive
-      this.players.set(e.id, { id: e.id, ipKey: e.ipKey, since: e.since, joined: true, name: e.name, colour: e.colour, zone: parseZone(e.zone), pose: null, times: [], pings: [], races: [], emotes: [], dropped: [], lastJump: -Infinity, bad: 0, renamedAt: -Infinity, lastMsg: e.heardAt ?? e.since ?? now });
+      this.players.set(e.id, { id: e.id, ipKey: e.ipKey, since: e.since, joined: true, name: e.name, colour: e.colour, zone: parseZone(e.zone), device: parseDevice(e.device), pose: null, times: [], pings: [], races: [], emotes: [], dropped: [], lastJump: -Infinity, bad: 0, renamedAt: -Infinity, lastMsg: e.heardAt ?? e.since ?? now });
       this.colourN++;
     }
   }
@@ -172,6 +174,8 @@ export class Room {
   broadcast(m, except = null) { return this.joined().filter(p => p.id !== except).map(p => msg(p.id, m)); }
   /** The same, to one zone only. */
   broadcastZone(m, zone, except = null) { return this.joined().filter(p => p.zone === zone && p.id !== except).map(p => msg(p.id, m)); }
+  /** Live-race traffic: the race runs at the Raceway, so only the hub hears it. */
+  raceCast(m) { return this.broadcastZone(m, 'hub'); }
   /** Joined players per zone, e.g. { hub: 2, 'lagoon-v1': 1 }; a zone with nobody in it is left out. */
   zones() { const z = {}; for (const p of this.players.values()) if (p.joined) z[p.zone] = (z[p.zone] ?? 0) + 1; return z; }
   /** The head count everyone hears on join, leave and kick. */
@@ -199,15 +203,27 @@ export class Room {
     try { m = JSON.parse(raw); } catch { return bad(); }
     if (!m || typeof m !== 'object' || Array.isArray(m)) return bad();
     if (m.t === 'hi' && !p.joined) {
+      // The same device already joined: drop the older player first, so its name is free and no count ever shows both
+      p.device = parseDevice(m.device);
+      const dups = p.device ? this.joined().filter(o => o.device === p.device) : [];
+      const dupOut = []; let dupRace = false;
+      for (const o of dups) {
+        const c = this.close(o.id, now);
+        dupOut.push(msg(o.id, DUP_ERR), ...c.out.filter(([, x]) => x.t !== 'n')); // the one count goes out below, after the join
+        dupRace ||= !!c.raceChanged;
+      }
       p.name = pickName(m.name, { ...this.grant(m.owner), taken: this.taken(), next: () => this.nextDriver() }).name;
       p.colour = COLOURS[this.colourN++ % COLOURS.length];
       p.zone = parseZone(m.zone); // set once, on hi: a venue is its own page, so changing zone is a new socket
       p.joined = true; p.bad = 0;
       const peers = this.joined().filter(o => o !== p).map(o => this.peerView(o));
-      const race = this.race && this.race.state !== 'done' ? { ...this.raceView(), t: undefined, state: this.race.state, order: this.order() } : null;
+      const race = p.zone === 'hub' && this.race && this.race.state !== 'done' ? { ...this.raceView(), t: undefined, state: this.race.state, order: this.order() } : null;
       if (race) delete race.t;
-      return { out: [msg(id, { t: 'ok', id, name: p.name, colour: p.colour, now, peers, zones: this.zones(), race }),
+      const res = { out: [...dupOut, msg(id, { t: 'ok', id, name: p.name, colour: p.colour, now, peers, zones: this.zones(), race }),
         ...this.broadcast({ t: 'join', id, name: p.name, colour: p.colour, zone: p.zone }, id), ...this.broadcast(this.count(), id)] };
+      if (dups.length) res.closeOthers = dups.map(o => ({ id: o.id, reason: 'dup' })); // the shell closes these sockets
+      if (dupRace) res.raceChanged = true;
+      return res;
     }
     if (m.t === 'ping') return over(p.pings, WORLD_PING_MAX_HZ) ? flooded() : { out: [msg(id, { t: 'pong', now, echo: m.echo })] };
     if (!p.joined) return bad();
@@ -267,7 +283,7 @@ export class Room {
     if (this.race && this.race.state === 'open') return this.joinRace(id, now);
     if (this.race && this.race.state !== 'done') return { out: [msg(id, { t: 'err', error: 'race_running' })] };
     this.race = { id: crypto.randomUUID().slice(0, 8), host: id, hostName: p.name, state: 'open', openedAt: now, startsAt: now + RACE_JOIN_MS, entrants: new Map([[id, { slot: 1, name: p.name, cps: [], fin: null, dnf: false }]]), firstFinAt: null, endedAt: null };
-    return { out: this.broadcast(this.raceView()), raceChanged: true };
+    return { out: this.raceCast(this.raceView()), raceChanged: true };
   }
   joinRace(id) {
     const r = this.race, p = this.players.get(id);
@@ -279,7 +295,7 @@ export class Room {
     let slot = 1; while (used.has(slot)) slot++;
     if (slot > RACE_GRID) return { out: [msg(id, { t: 'err', error: 'race_full' })] };
     r.entrants.set(id, { slot, name: p.name, cps: [], fin: null, dnf: false });
-    return { out: this.broadcast({ t: 'race.grid', id: r.id, grid: this.grid() }), raceChanged: true };
+    return { out: this.raceCast({ t: 'race.grid', id: r.id, grid: this.grid() }), raceChanged: true };
   }
   /** Off the grid before Go (the slot is freed); a DNF once running. */
   leaveRace(id, now = 0) {
@@ -287,14 +303,14 @@ export class Room {
     if (!r || !r.entrants.has(id)) return { out: [] };
     if (r.state === 'open' || r.state === 'countdown') {
       r.entrants.delete(id);
-      if (r.state === 'countdown' && r.entrants.size === 0) { this.race = null; return { out: this.broadcast({ t: 'race.cancel', id: r.id, why: 'Nobody left' }), raceChanged: true }; }
-      return { out: this.broadcast({ t: 'race.grid', id: r.id, grid: this.grid() }), raceChanged: true };
+      if (r.state === 'countdown' && r.entrants.size === 0) { this.race = null; return { out: this.raceCast({ t: 'race.cancel', id: r.id, why: 'Nobody left' }), raceChanged: true }; }
+      return { out: this.raceCast({ t: 'race.grid', id: r.id, grid: this.grid() }), raceChanged: true };
     }
     const e = r.entrants.get(id);
     if (r.state === 'running' && !e.fin && !e.dnf) {
       e.dnf = true;
       const done = [...r.entrants.values()].every(x => x.fin || x.dnf);
-      return { out: done ? this.endRace(now) : this.broadcast({ t: 'race.pos', id: r.id, order: this.order() }), raceChanged: true };
+      return { out: done ? this.endRace(now) : this.raceCast({ t: 'race.pos', id: r.id, order: this.order() }), raceChanged: true };
     }
     return { out: [] };
   }
@@ -330,10 +346,10 @@ export class Room {
       if (d == null || d > now) break;
       raceChanged = true;
       if (r.state === 'open') {
-        if (r.entrants.size < 2) { out.push(...this.broadcast({ t: 'race.cancel', id: r.id, why: 'Nobody joined' })); this.race = null; }
-        else { r.state = 'countdown'; out.push(...this.broadcast({ t: 'race.go', id: r.id, startsAt: r.startsAt })); }
+        if (r.entrants.size < 2) { out.push(...this.raceCast({ t: 'race.cancel', id: r.id, why: 'Nobody joined' })); this.race = null; }
+        else { r.state = 'countdown'; out.push(...this.raceCast({ t: 'race.go', id: r.id, startsAt: r.startsAt })); }
       } else if (r.state === 'countdown') {
-        if (r.entrants.size === 0) { out.push(...this.broadcast({ t: 'race.cancel', id: r.id, why: 'Nobody left' })); this.race = null; }
+        if (r.entrants.size === 0) { out.push(...this.raceCast({ t: 'race.cancel', id: r.id, why: 'Nobody left' })); this.race = null; }
         else r.state = 'running';
       }
       else if (r.state === 'running') out.push(...this.endRace(now));
@@ -345,7 +361,7 @@ export class Room {
     const r = this.race;
     r.state = 'done'; r.endedAt = now;
     for (const e of r.entrants.values()) if (!e.fin) e.dnf = true;
-    return this.broadcast({ t: 'race.end', id: r.id, order: this.order(), dnf: [...r.entrants].filter(([, e]) => e.dnf).map(([id]) => id) });
+    return this.raceCast({ t: 'race.end', id: r.id, order: this.order(), dnf: [...r.entrants].filter(([, e]) => e.dnf).map(([id]) => id) });
   }
   /** A checkpoint from an entrant: only the next one counts; repeats and skips are ignored (lag, a backed-over gate). */
   checkpoint(id, i, now) {
@@ -355,7 +371,7 @@ export class Room {
     if (r.state !== 'running' || e.fin || e.dnf) return { out: [] };
     if (!Number.isInteger(i) || i !== e.cps.length + 1 || i > RACE_CHECKPOINTS) return { out: [] };
     e.cps.push(now - r.startsAt);
-    return { out: this.broadcast({ t: 'race.pos', id: r.id, order: this.order() }), raceChanged: true };
+    return { out: this.raceCast({ t: 'race.pos', id: r.id, order: this.order() }), raceChanged: true };
   }
   /** The finish line, after every checkpoint. `ms` is the lap time the car measured, for the card only; the order
    * is by the server's receive time. The race ends at once when nobody is left on track. */
@@ -367,7 +383,7 @@ export class Room {
     e.fin = { at: now - r.startsAt, ms: Number.isFinite(ms) && ms > 0 && ms <= 600_000 ? Math.round(ms) : null };
     if (r.firstFinAt == null) r.firstFinAt = now;
     const done = [...r.entrants.values()].every(x => x.fin || x.dnf);
-    return { out: done ? this.endRace(now) : this.broadcast({ t: 'race.pos', id: r.id, order: this.order() }), raceChanged: true };
+    return { out: done ? this.endRace(now) : this.raceCast({ t: 'race.pos', id: r.id, order: this.order() }), raceChanged: true };
   }
   /** Running order: finishers first by the server clock, then the furthest checkpoint, earliest first; DNFs last.
    * Finishes within RACE_DEAD_HEAT_MS of the one ahead share its position. */
