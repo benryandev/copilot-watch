@@ -46,6 +46,10 @@ export class Boards {
     await this.ctx.storage.put(SEEDED, true);
   }
 
+  async mirror(key) {
+    try { await this.env.KV.put(key, await this.ctx.storage.get(key)); } catch { console.log('board mirror failed', JSON.stringify({ key })); }
+  }
+
   async fetch(req) {
     let body;
     try { body = await req.json(); } catch { return reply({ error: 'bad_json' }, 400); }
@@ -69,9 +73,9 @@ export class Boards {
       return reply({ error: 'board_busy' }, 500);
     }
     if (out.res === null) return reply({ error: 'wrong_board' }, 400);
-    if (out.value !== null) {
-      try { await this.env.KV.put(key, out.value); } catch { console.log('board mirror failed', JSON.stringify({ key })); }
-    }
+    // Mirror writes run one after another and each writes the board as stored at that moment, so a slow earlier put
+    // can never land after a later one and leave KV behind (the branch review, 6 Nov)
+    if (out.value !== null) await (this.mirrored = (this.mirrored || Promise.resolve()).then(() => this.mirror(key)));
     return reply(out.res);
   }
 }

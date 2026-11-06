@@ -100,3 +100,13 @@ test('a full race board (100 rows, 400-sample traces) stays under the 2 MB value
   const len = JSON.stringify(rows).length;
   assert.ok(len < 2 * 1024 * 1024, `${len} bytes`);
 });
+
+test('mirror writes land in order: a slow first put never leaves KV behind the board', async () => {
+  // KV whose first put is slow and whose second is fast: without ordering, A's older board lands last
+  const kv = memKV(), realPut = kv.put; let n = 0;
+  kv.put = async (k, v, o) => { const slow = ++n === 1; await new Promise(r => setTimeout(r, slow ? 30 : 0)); return realPut(k, v, o); };
+  const b = new Boards(fakeCtx(), { KV: kv });
+  await Promise.all([call(b, 'raceAdd', { entry: entry('Tynus', 30313), now: 1 }), call(b, 'raceAdd', { entry: entry('Ninja1', 30372), now: 2 })]);
+  await b.mirrored; // the object's mirror chain, settled
+  assert.deepEqual((await kv.get(KEY, 'json')).map(r => r.name), ['Tynus', 'Ninja1']);
+});

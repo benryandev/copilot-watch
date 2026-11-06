@@ -111,6 +111,10 @@ posts close together can no longer erase each other, and reads come from it, so 
   of either worker loses nothing.
 - **On first use** an object copies its board from KV once.
 - **Turning it off:** remove the var and `pnpm run deploy`. Posts then go to KV again and the objects' copies go stale.
+- **Switching on (the first time or again):** do it at a quiet time. About two minutes after copilot-watch is deployed, run
+  `sh scripts/board-check.sh race:top:realfi-v1 race:top:lagoon-v2 arcade:top:flappy-coin`: it lists any row KV holds
+  that the writer doesn't (a post that went straight to KV in the deploy window). Re-add those by hand before the next post.
+  Every new track or game adds its key to this list and to the reseed below.
 - **Turning it back on:** reseed first, then deploy with the var. Reseed makes every object drop its copy and copy KV again:
 
 ```sh
