@@ -15,6 +15,15 @@ id = "22fd6ef1fa074edea7689bdaa2b5378f"
 name = "WORLD"
 class_name = "World"
 
+# The leaderboards' writer (src/boards-do.js): one object per board key (6 Nov 2026)
+[[durable_objects.bindings]]
+name = "BOARDS"
+class_name = "Boards"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["World"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["Boards"]

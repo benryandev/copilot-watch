@@ -4,6 +4,12 @@
 import { Room, WORLD_OFF_KEY, WORLD_IDLE_MS, WORLD_VERSION, offChecker } from './world.js';
 import { RACE_ORIGINS, RACE_ADMIN_HEADER } from './race.js';
 import { safeEqual } from './telegram.js';
+export { Boards } from './boards-do.js';
+
+// The leaderboards' writer (boards-do.js): one object per board key, reached by copilot-watch over its WORLD binding
+const BOARD_KEY = /^(race|arcade):top:[a-z0-9-]+$/;
+const boardStub = (env, key) => env.BOARDS.get(env.BOARDS.idFromName(key));
+const toBoard = (env, key, body) => boardStub(env, key).fetch(new Request('https://boards/op', { method: 'POST', body: JSON.stringify(body) }));
 
 const ROOM = 'main';
 
@@ -33,6 +39,21 @@ export default {
     if ((pathname === '/who' && req.method === 'GET') || ((pathname === '/kick' || pathname === '/restart' || pathname === '/announce') && req.method === 'POST')) {
       if (!isAdmin(req, env)) return json({ error: 'forbidden' }, 403, origin);
       return room(env).fetch(req);
+    }
+    if (pathname.startsWith('/board/') && req.method === 'POST') {
+      if (!isAdmin(req, env)) return json({ error: 'forbidden' }, 403, origin);
+      let b;
+      try { b = await req.json(); } catch { return json({ error: 'bad_json' }, 400, origin); }
+      const okKey = k => typeof k === 'string' && BOARD_KEY.test(k);
+      if (pathname === '/board/op') {
+        if (!okKey(b?.key)) return json({ error: 'bad_key' }, 400, origin);
+        return toBoard(env, b.key, b);
+      }
+      if (pathname === '/board/reseed') { // after the writer was switched off and on again (README, Leaderboards)
+        if (!Array.isArray(b?.keys) || !b.keys.length || !b.keys.every(okKey)) return json({ error: 'bad_key' }, 400, origin);
+        for (const key of b.keys) await toBoard(env, key, { op: 'reseed', key });
+        return json({ ok: true, keys: b.keys }, 200, origin);
+      }
     }
     if (pathname === '/health') return new Response('ok');
     if (pathname === '/') return new Response('copilot-world: the multiplayer room for strike.benryan.com.au/ecosystem', { headers: { 'content-type': 'text/plain; charset=utf-8' } });
