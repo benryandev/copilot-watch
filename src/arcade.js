@@ -11,6 +11,7 @@
 import { RACE_ORIGINS, RACE_ADMIN_HEADER, cleanName, cors, json, readJson, hashHex, isAdmin, parseDevice } from './race.js';
 import { safeEqual } from './telegram.js';
 import { newId } from './paper.js';
+import { boardsOn, remoteBoards, BOARD_BUSY } from './boards.js';
 
 /** Known cabinets. scoreMax: the most the game can pay out in a full clear; levelMax: its last level; maxMs: longest run kept. */
 export const ARCADE_GAMES = {
@@ -45,7 +46,8 @@ export function parseScore(body) {
   return { ok: true, entry: { game: body.game, name: n.name, key: n.name.toLowerCase(), score, level, won, ms, device: parseDevice(body.device) } };
 }
 
-const boardKey = game => `arcade:top:${game}`;
+export const arcadeBoardKey = game => `arcade:top:${game}`;
+const boardKey = arcadeBoardKey;
 const order = (a, b) => b.score - a.score || a.at - b.at;
 const pub = rows => rows.slice(0, ARCADE_SHOW).map(({ name, score, level, won, at }) => ({ name, score, level, won, at }));
 export const getBoard = async (kv, game) => (await kv.get(boardKey(game), 'json')) || [];
@@ -86,7 +88,14 @@ export async function removeScore(kv, game, { id, name } = {}) {
 const ipKey = async ip => 'arcade:ip:' + await hashHex(`arcade:${ip}`);
 
 /** Routes under /arcade/. */
-export async function handleArcadeApi(req, env, { now = Date.now() } = {}) {
+export async function handleArcadeApi(req, env, opts = {}) {
+  try { return await arcadeApi(req, env, opts); } catch (e) {
+    if (e?.message === BOARD_BUSY) return json({ error: BOARD_BUSY }, 503, req.headers.get('origin') || '');
+    throw e;
+  }
+}
+
+async function arcadeApi(req, env, { now = Date.now() } = {}) {
   const origin = req.headers.get('origin') || '';
   const url = new URL(req.url), kv = env.KV;
   if (req.method === 'OPTIONS') return new Response(null, { status: RACE_ORIGINS.includes(origin) ? 204 : 403, headers: { ...cors(origin), 'access-control-allow-methods': 'GET, POST, DELETE, OPTIONS' } });
@@ -94,7 +103,7 @@ export async function handleArcadeApi(req, env, { now = Date.now() } = {}) {
   if (req.method === 'GET' && url.pathname === '/arcade/top') {
     const game = url.searchParams.get('game') || '';
     if (!Object.hasOwn(ARCADE_GAMES, game)) return json({ error: 'unknown_game' }, 404, origin);
-    const rows = await getBoard(kv, game);
+    const rows = boardsOn(env) ? await remoteBoards(env).read(boardKey(game)) : await getBoard(kv, game);
     if (isAdmin(req, env)) return json({ game, all: rows.map(({ id, name, score, level, won, ms, at }) => ({ id, name, score, level, won, ms, at })) }, 200, origin);
     return json({ game, top: pub(rows) }, 200, origin);
   }
@@ -123,11 +132,12 @@ export async function handleArcadeApi(req, env, { now = Date.now() } = {}) {
       p.entry.ak = await hashHex(`arcade:board:${ip}`); // the address (rows from before tokens carry this very hash as ipk)
       p.entry.ipk = p.entry.device ? await hashHex(`arcade:board:${ip}:${p.entry.device}`) : p.entry.ak; // the player: address and device
     }
-    const { rank, best, rows, error } = await addScore(kv, p.entry, now);
+    const { rank, best, rows, error } = boardsOn(env) ? await remoteBoards(env).arcadeAdd(p.entry, now) : await addScore(kv, p.entry, now);
     if (error) { // the address already holds its five rows and this would be a sixth
       console.log('arcade reject', JSON.stringify({ error, game: p.entry.game, score: p.entry.score, name: p.entry.name }));
       return json({ error }, 409, origin);
     }
+    console.log('arcade post', JSON.stringify({ name: p.entry.name, score: p.entry.score, rank, best }));
     return json({ ok: true, rank, best, top: pub(rows) }, 200, origin);
   }
 
@@ -144,7 +154,8 @@ export async function handleArcadeApi(req, env, { now = Date.now() } = {}) {
     const game = q('game'), id = q('id'), name = q('name');
     if (!Object.hasOwn(ARCADE_GAMES, game)) return json({ error: 'unknown_game' }, 400, origin);
     if (!id && !name) return json({ error: 'need_id_or_name' }, 400, origin);
-    const removed = await removeScore(kv, game, { id: id || null, name: name || null });
+    const which = { id: id || null, name: name || null };
+    const removed = boardsOn(env) ? await remoteBoards(env).arcadeRemove(game, which) : await removeScore(kv, game, which);
     return json({ ok: removed > 0, removed }, removed ? 200 : 404, origin);
   }
 

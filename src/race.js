@@ -14,6 +14,7 @@
 import { raceTrack, RACE_MAX_MS } from './race-tracks.js';
 import { safeEqual } from './telegram.js';
 import { newId } from './paper.js';
+import { boardsOn, remoteBoards, BOARD_BUSY } from './boards.js';
 
 export const RACE_ORIGINS = ['https://strike.benryan.com.au', 'http://localhost:8766'];
 export const RACE_KEEP = 100, RACE_SHOW = 10, RACE_RATE_SEC = 10, RACE_MAX_BODY = 16384, RACE_NAME_MAX = 20;
@@ -152,7 +153,7 @@ export function parseTime(body) {
 
 // ---- board ----
 
-const boardKey = track => `race:top:${track}`;
+export const boardKey = track => `race:top:${track}`;
 const order = (a, b) => a.ms - b.ms || a.at - b.at;
 const pub = rows => rows.slice(0, RACE_SHOW).map(({ name, ms, at }) => ({ name, ms, at }));
 export const getBoard = async (kv, track) => (await kv.get(boardKey(track), 'json')) || [];
@@ -252,7 +253,17 @@ function announceRecord(env, rec, waitUntil) {
   if (waitUntil) waitUntil(job);
 }
 
-export async function handleRaceApi(req, env, { now = Date.now(), waitUntil = null } = {}) {
+// The boards' writer when it is on (boards.js), else KV
+const readBoard = (env, track) => (boardsOn(env) ? remoteBoards(env).read(boardKey(track)) : getBoard(env.KV, track));
+
+export async function handleRaceApi(req, env, opts = {}) {
+  try { return await raceApi(req, env, opts); } catch (e) {
+    if (e?.message === BOARD_BUSY) return json({ error: BOARD_BUSY }, 503, req.headers.get('origin') || '');
+    throw e;
+  }
+}
+
+async function raceApi(req, env, { now = Date.now(), waitUntil = null } = {}) {
   const origin = req.headers.get('origin') || '';
   const url = new URL(req.url), kv = env.KV;
   if (req.method === 'OPTIONS') return new Response(null, { status: RACE_ORIGINS.includes(origin) ? 204 : 403, headers: cors(origin) });
@@ -260,7 +271,7 @@ export async function handleRaceApi(req, env, { now = Date.now(), waitUntil = nu
   if (req.method === 'GET' && url.pathname === '/race/top') {
     const track = url.searchParams.get('track') || '';
     if (!raceTrack(track)) return json({ error: 'unknown_track' }, 404, origin);
-    const rows = await getBoard(kv, track);
+    const rows = await readBoard(env, track);
     // With the admin header, the whole board with ids (so an entry can be deleted by id); the public gets names only.
     if (isAdmin(req, env)) return json({ track, all: rows.map(({ id, name, ms, splits, trace, at }) => ({ id, name, ms, splits, trace: trace ? trace.length : null, at })) }, 200, origin);
     return json({ track, top: pub(rows) }, 200, origin);
@@ -270,7 +281,7 @@ export async function handleRaceApi(req, env, { now = Date.now(), waitUntil = nu
   if (req.method === 'GET' && url.pathname === '/race/ghost') {
     const track = url.searchParams.get('track') || '';
     if (!raceTrack(track)) return json({ error: 'unknown_track' }, 404, origin);
-    const r = (await getBoard(kv, track))[0];
+    const r = (await readBoard(env, track))[0];
     return json({ track, ghost: r ? { name: r.name, ms: r.ms, splits: r.splits, trace: r.trace || null, at: r.at } : null }, 200, origin);
   }
 
@@ -299,11 +310,12 @@ export async function handleRaceApi(req, env, { now = Date.now(), waitUntil = nu
       p.entry.ak = await hashHex(`race:board:${ip}`); // the address (rows from before tokens carry this very hash as ipk)
       p.entry.ipk = p.entry.device ? await hashHex(`race:board:${ip}:${p.entry.device}`) : p.entry.ak; // the player: address and device
     }
-    const { rank, best, rows, error } = await addTime(kv, p.entry, now);
+    const { rank, best, rows, error } = boardsOn(env) ? await remoteBoards(env).raceAdd(p.entry, now) : await addTime(kv, p.entry, now);
     if (error) { // the address already holds its five rows and this would be a sixth
       console.log('race reject', JSON.stringify({ error, ms: p.entry.ms, name: p.entry.name }));
       return json({ error }, 409, origin);
     }
+    console.log('race post', JSON.stringify({ name: p.entry.name, ms: p.entry.ms, rank, best }));
     if (rank === 1 && best) announceRecord(env, { track: p.entry.track, trackName: raceTrack(p.entry.track)?.name, name: p.entry.name, ms: p.entry.ms }, waitUntil);
     await countEvent(kv, p.entry.track, 'post', ip, now);
     return json({ ok: true, rank, best, top: pub(rows) }, 200, origin);
@@ -343,7 +355,8 @@ export async function handleRaceApi(req, env, { now = Date.now(), waitUntil = nu
     const track = q('track'), id = q('id'), name = q('name');
     if (!raceTrack(track)) return json({ error: 'unknown_track' }, 400, origin);
     if (!id && !name) return json({ error: 'need_id_or_name' }, 400, origin);
-    const removed = await removeTime(kv, track, { id: id || null, name: name || null });
+    const which = { id: id || null, name: name || null };
+    const removed = boardsOn(env) ? await remoteBoards(env).raceRemove(track, which) : await removeTime(kv, track, which);
     return json({ ok: removed > 0, removed }, removed ? 200 : 404, origin);
   }
 
