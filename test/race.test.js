@@ -458,8 +458,30 @@ test('trace speed check allows for position rounding over a tiny interval', () =
   const last = tr[tr.length - 1];
   const nudged = [...tr.slice(0, -1), [last[0] - 5, last[1] - 0.1, last[2] - 0.2, last[3]], last];
   assert.ok(parseTrace(nudged, L.ms, T).ok, 'a 0.22 m step in 5 ms is rounding, not speed');
-  const leap = [...tr.slice(0, -1), [last[0] - 5, last[1] - 1, last[2] - 0.5, last[3]], last];
-  assert.equal(parseTrace(leap, L.ms, T).why, 'speed', 'a 1.1 m step in 5 ms is still impossible');
+  // Mid-lap the rounding is all the slack there is
+  const mid = Math.floor(tr.length / 2), m = tr[mid];
+  const midLeap = [...tr.slice(0, mid), [m[0] - 5, m[1] - 1, m[2] - 0.5, m[3]], ...tr.slice(mid)];
+  assert.equal(parseTrace(midLeap, L.ms, T).why, 'speed', 'a 1.1 m step in 5 ms mid-lap is impossible');
+});
+
+// The last sample is stamped with the moment the car crossed the line but carries where the car was at the end of that
+// frame (ecosystem/js/race.js finish), up to one 1/30 s frame further on. A previous sample on the frame before made a
+// clean lap read as a burst of speed: a third of 60 fps Lagoon laps, seven in ten at 30 fps (SellOuT's 30.594 and
+// CryptoNinja's 30.372, 6 Nov 2026). The last step gets one frame of travel at the track's ceiling on top.
+test('the last sample may overshoot the line by one 30 fps frame of travel, no more', () => {
+  const L = lap(), tr = traceFor(L);
+  const last = tr[tr.length - 1], frame = T.segMaxSpeed / 30;
+  const over = (d) => [...tr.slice(0, -1), [last[0] - 5, last[1], last[2], last[3]], [last[0], last[1] + d, last[2], last[3]]];
+  assert.ok(parseTrace(over(0.5), L.ms, T).ok, 'a 60 fps finish frame');
+  assert.ok(parseTrace(over(frame), L.ms, T).ok, 'a 30 fps finish frame at the ceiling');
+  assert.equal(parseTrace(over(frame + 0.5), L.ms, T).why, 'speed', 'more than a frame is still impossible');
+  // On the Lagoon, a 30 m/s finish at 30 fps (1 m in the frame) after a sample 5 ms earlier
+  const LG = raceTrack('lagoon-v2'), lg = { splits: LG.checkpoints.map(d => Math.round((d * 1000) / 29)), ms: Math.round((LG.length * 1000) / 29) };
+  const ltr = [];
+  for (let t = 0; t < lg.ms - 5; t += 100) ltr.push([t, Math.round((t / 1000) * 29 * 10) / 10, 0, 0]);
+  const xEnd = (lg.ms / 1000) * 29;
+  ltr.push([lg.ms - 5, Math.round((xEnd - 0.15) * 10) / 10, 0, 0], [lg.ms, Math.round((xEnd + 1) * 10) / 10, 0, 0]);
+  assert.ok(parseTrace(ltr, lg.ms, LG).ok, 'the Lagoon finish that was refused');
 });
 
 test('a new #1 is announced to the world room through the WORLD binding; other posts are not; no binding is fine', async () => {

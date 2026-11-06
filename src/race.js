@@ -33,6 +33,9 @@ export const RACE_TRACE_MIN_PATH = 0.7;
  * lap (31 Oct 2026) peaked at 29.3 m/s between samples; the lap itself averaged 25 m/s. A teleport is hundreds of m/s. */
 export const RACE_TRACE_WINDOW_MS = 1000; // the trace speed limit is also checked over this long, past the rounding slack
 // The trace speed limit is the entry's maxSpeed (src/tracks.json): the car's 24 m/s, 28 for a moment after a jump boost, and a little slack (was 40: a 34 m/s lap got through, 1 Nov 2026)
+// The last sample is stamped at the crossing but placed at the end of that frame (the client's frame is at most 1/30 s):
+// its step may run one frame of travel at the track's ceiling (segMaxSpeed) past what the speed limit allows (6 Nov 2026)
+export const RACE_TRACE_END_FRAME_S = 1 / 30;
 export const RACE_TRACE_ROUNDING = 0.3; // m: two positions each rounded to 0.1 m can differ by this much with no movement at all
 export const RACE_ADMIN_HEADER = 'x-race-admin';
 // Funnel stages, in order. "post" is counted here when a time is accepted; the page sends the rest.
@@ -94,8 +97,10 @@ export function parseTrace(trace, ms, t) {
   const bad = why => ({ ok: false, error: 'bad_trace', why }); // why: shape | range | order | speed | ends | path (for the log)
   if (!Array.isArray(trace) || trace.length < RACE_TRACE_MIN || trace.length > RACE_TRACE_MAX) return bad('shape');
   const out = []; let path = 0, prev = null, win = 0;
-  for (const s of trace) {
+  const endSlack = t.segMaxSpeed * RACE_TRACE_END_FRAME_S;
+  for (const [i, s] of trace.entries()) {
     if (!Array.isArray(s) || s.length !== 4) return bad('shape');
+    const slack = RACE_TRACE_ROUNDING + (i === trace.length - 1 ? endSlack : 0);
     const [tt, x, z, h] = s;
     if (!Number.isSafeInteger(tt) || tt < 0 || tt > ms) return bad('range');
     if (![x, z, h].every(v => typeof v === 'number' && Number.isFinite(v)) || Math.abs(x) > 2000 || Math.abs(z) > 2000 || Math.abs(h) > 100) return bad('range');
@@ -103,14 +108,14 @@ export function parseTrace(trace, ms, t) {
       const dt = tt - prev[0];
       if (dt <= 0) return bad('order');
       const d = Math.hypot(x - prev[1], z - prev[2]);
-      if (d > (t.maxSpeed * dt) / 1000 + RACE_TRACE_ROUNDING) return bad('speed'); // speed limit, plus what 0.1 m rounding can add
+      if (d > (t.maxSpeed * dt) / 1000 + slack) return bad('speed'); // speed limit, plus what 0.1 m rounding (and the last frame) can add
       path += d;
       // The same limit over about a second, where the rounding allowance no longer hides a few m/s (a lap pinned at 31 m/s
       // passes sample to sample; a real 28 m/s boost burst of 1.6 s inside a 24 m/s lap still fits)
       while (win < out.length && tt - out[win][0] > RACE_TRACE_WINDOW_MS) win++;
       if (win < out.length && tt - out[win][0] >= RACE_TRACE_WINDOW_MS * 0.8) {
         const w = out[win], wd = Math.hypot(x - w[1], z - w[2]);
-        if (wd > (t.maxSpeed * (tt - w[0])) / 1000 + RACE_TRACE_ROUNDING) return bad('speed');
+        if (wd > (t.maxSpeed * (tt - w[0])) / 1000 + slack) return bad('speed');
       }
     }
     out.push([tt, Math.round(x * 10) / 10, Math.round(z * 10) / 10, Math.round(h * 100) / 100]);
