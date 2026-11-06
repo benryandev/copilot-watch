@@ -505,14 +505,15 @@ test('room: an emote goes to everyone else, not back to the sender; garbage is b
 });
 
 // ---- zones: venues share the room, each sees only its own zone ----
-import { WORLD_HUB_TRACK, ZONE_RE, parseZone } from '../src/world.js';
+import { WORLD_HUB_TRACK, ZONE_RE, parseZone, RETIRED_ZONES } from '../src/world.js';
+import { raceTrack } from '../src/race-tracks.js';
 import { RACE_TRACKS, TRACK_IDS } from '../src/race-tracks.js';
 
 test('zones: parseZone keeps a short lower-case slug, anything else is hub', () => {
   const ids = ['realfi-v1', 'lagoon-v2'];
   assert.equal(parseZone('lagoon-v2', ids), 'lagoon-v2'); assert.equal(parseZone('hub', ids), 'hub'); assert.equal(parseZone('realfi-v1'), 'realfi-v1');
   for (const bad of [undefined, null, '', 'Bad Zone!', 'Lagoon', 'a'.repeat(17), 7, {}, ['lagoon']]) assert.equal(parseZone(bad, ids), 'hub', JSON.stringify(bad));
-  assert.ok(ZONE_RE.test('lagoon-v2')); assert.equal(parseZone('lagoon-v1'), 'hub', 'the old id is gone from the registry');
+  assert.ok(ZONE_RE.test('lagoon-v2')); assert.equal(parseZone('lagoon-v1'), 'lagoon-v1', 'a retired id keeps its own zone'); assert.equal(parseZone('lagoon-v1', ids), 'lagoon-v1');
   // only the hub or a registry key is a zone: a made-up slug cannot put text on everyone's sheet
   assert.equal(parseZone('evil-zone', ids), 'hub'); assert.equal(parseZone('evil-zone'), 'hub'); assert.equal(parseZone('lagoon-v2'), 'lagoon-v2', 'in the registry');
   assert.ok(TRACK_IDS.includes('realfi-v1'));
@@ -549,6 +550,24 @@ test('zones: snapshots go to the mover\'s zone only; movers in two zones make tw
   assert.deepEqual(to(f.out, 'c'), to(f.out, 'b'));
   assert.ok(f.out.every(([, m]) => m.t === 's'), 'no n on snapshots');
   assert.equal(r.dirty.size, 0); assert.equal(r.flush(200).out.length, 0);
+});
+
+test('zones: a retired track id is its own zone, so a cached v1 page never draws in the hub', () => {
+  assert.deepEqual([...RETIRED_ZONES], ['lagoon-v1']); assert.ok(Object.isFrozen(RETIRED_ZONES));
+  assert.equal(raceTrack('lagoon-v1'), null, 'still not a race track');
+  const r = room();
+  hi(r, 'a', 'A'); const { out } = hi(r, 'v', 'V', 0, { zone: 'lagoon-v1' });
+  assert.equal(r.players.get('v').zone, 'lagoon-v1');
+  assert.deepEqual(to(out, 'v').find(m => m.t === 'ok').zones, { hub: 1, 'lagoon-v1': 1 });
+  assert.deepEqual(r.who().map(w => [w.id, w.zone]), [['a', 'hub'], ['v', 'lagoon-v1']]);
+  // a hub mover and a v1 mover in the same window: each gets only its own zone's poses
+  // the first (immediate) hub snapshot goes to the hub player only
+  assert.deepEqual(snaps(pose(r, 'a', 0).out).map(([id]) => id), ['a']);
+  assert.equal(pose(r, 'v', 50, { x: 7 }).flushIn, 50); assert.equal(pose(r, 'a', 60, { x: 5 }).flushIn, 40);
+  const f = r.flush(100);
+  assert.deepEqual(to(f.out, 'a'), [{ t: 's', now: 100, p: [['a', 5, 2, 0.5, 3, 0]] }]);
+  assert.deepEqual(to(f.out, 'v'), [{ t: 's', now: 100, p: [['v', 7, 2, 0.5, 3, 0]] }]);
+  assert.deepEqual(r.onMessage('v', JSON.stringify({ t: 'race.open' }), 1000).out, [['v', { t: 'err', error: 'race_zone', why: 'Live races run at the Raceway for now' }]]);
 });
 
 test('zones: emotes stay in the zone', () => {

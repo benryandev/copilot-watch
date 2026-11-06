@@ -105,8 +105,11 @@ if (!hubTrack) throw new Error(`world: the hub track ${WORLD_HUB_TRACK} is not o
 export const RACE_CHECKPOINTS = hubTrack.checkpoints.length;
 // ── Zones: the hub and each venue page share the room, but see and hear only their own zone ──
 export const ZONE_RE = /^[a-z0-9-]{1,16}$/;
-/** A zone is `hub` or a key of src/tracks.json (open or not); anything else is the hub. `ids` is a test seam. */
-export const parseZone = (z, ids = TRACK_IDS) => (typeof z === 'string' && ZONE_RE.test(z) && (z === 'hub' || ids.includes(z)) ? z : 'hub');
+/** Track ids gone from the registry that still name their own zone. A page cached before a relay deploy keeps its old
+ * zone, and its poses are in that venue's frame, so they must never reach the hub. A retired id is never a race track. */
+export const RETIRED_ZONES = Object.freeze(['lagoon-v1']);
+/** A zone is `hub`, a key of src/tracks.json (open or not) or a retired id; anything else is the hub. `ids` is a test seam. */
+export const parseZone = (z, ids = TRACK_IDS) => (typeof z === 'string' && ZONE_RE.test(z) && (z === 'hub' || ids.includes(z) || RETIRED_ZONES.includes(z)) ? z : 'hub');
 const RACE_ZONE_ERR = { t: 'err', error: 'race_zone', why: 'Live races run at the Raceway for now' };
 // One socket per device: a device joining again (a second tab, a reload before the old socket died) closes the older one
 const DUP_ERR = { t: 'err', error: 'dup', why: 'This device is driving in another tab' };
