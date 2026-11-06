@@ -99,6 +99,31 @@ curl -X DELETE 'https://copilot-watch.benryan.workers.dev/race/time?track=realfi
 
 No `wrangler.toml` change is needed: it uses the existing `KV` binding.
 
+## Leaderboard writer
+
+Every board (each race track, each arcade game) has one writer: a `Boards` Durable Object in copilot-world, one object per
+board key (`race:top:<track>`, `arcade:top:<game>`). It applies posts and deletes one at a time with the rules above, so two
+posts close together can no longer erase each other, and reads come from it, so a new time shows at once. Before this
+(until 6 Nov 2026) each board was read, changed and written back in KV, whose reads can be about a minute stale.
+
+- **The switch** is `BOARD_WRITER = "do"` in `wrangler.toml` `[vars]`. Without it (tests, local dev) the boards use KV directly.
+- **The mirror:** after every change the object also writes the board to its KV key, so KV is always current and a rollback
+  of either worker loses nothing.
+- **On first use** an object copies its board from KV once.
+- **Turning it off:** remove the var and `pnpm run deploy`. Posts then go to KV again and the objects' copies go stale.
+- **Turning it back on:** reseed first, then deploy with the var. Reseed makes every object drop its copy and copy KV again:
+
+```sh
+curl -X POST https://copilot-world.benryan.workers.dev/board/reseed \
+  -H 'x-race-admin: YOUR_RACE_ADMIN_TOKEN' -H 'content-type: application/json' \
+  -d '{"keys":["race:top:realfi-v1","race:top:lagoon-v2","arcade:top:flappy-coin"]}'
+```
+
+- **If the writer is down,** posts and reads answer 503 `board_busy` (no fallback to KV). The site keeps an unposted lap
+  offered, so the player posts again.
+- **Logs** (Workers Logs, 3 days): `race post` / `arcade post` for every accepted post, `board mirror failed` if a KV
+  mirror write fails (the next change rewrites it).
+
 ## Arcade boards
 
 Score boards for the arcade cabinets in the ecosystem world (first cabinet: Flappy Coin by IBuyTheTop, 1 Nov 2026). Same origin rules, name checks, rate limit shape and admin header as the race board; `src/arcade.js`.

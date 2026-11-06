@@ -28,6 +28,9 @@ invocation_logs = false
 crons = ["*/2 * * * *", "0 22 * * *"]
 
 [vars]
+# Leaderboards go through their one writer in copilot-world (src/boards.js, README "Leaderboard writer"). Remove to fall
+# back to KV; turning it back on needs POST /board/reseed first.
+BOARD_WRITER = "do"
 DISCORD_APP_ID = "1561719393992319007"
 DISCORD_PUBLIC_KEY = "50e537c588ad61fa8b38b6ced330efecd368c0c74f351ea710808beba8d6cb48"
 
