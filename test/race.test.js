@@ -300,6 +300,10 @@ test('CORS: allowed origins echoed with Vary, others get none; preflight; POST n
   const p = await post(e, good(), { origin: 'https://evil.example' });
   assert.equal(p.status, 403); assert.equal(p.headers.get('access-control-allow-origin'), null);
   assert.equal((await post(e, good(), { origin: '' })).status, 403);
+  assert.ok(RACE_ORIGINS.includes('https://strikedrive.xyz'));
+  const sd = await post(e, good({ name: 'Drive' }), { origin: 'https://strikedrive.xyz' });
+  assert.equal(sd.status, 200); assert.equal(sd.headers.get('access-control-allow-origin'), 'https://strikedrive.xyz');
+  assert.equal((await post(e, good({ name: 'Wwwdrive' }), { origin: 'https://www.strikedrive.xyz' })).status, 403);
   // routed through the worker
   const w = await handler.fetch(req('GET', `/race/top?track=${TRACK}`), e, {});
   assert.equal(w.status, 200); assert.equal(w.headers.get('access-control-allow-origin'), O);

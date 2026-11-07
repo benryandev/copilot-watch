@@ -142,7 +142,7 @@ A score is only a number, so the checks are about pace, not proof: `score ≤ 40
 
 ## Project submissions
 
-The form at `https://strike.benryan.com.au/ecosystem/submit/` posts here (`src/submit.js`); same CORS origins as the race board.
+The form at `https://strikedrive.xyz/submit/` posts here (`src/submit.js`); same CORS origins as the race board.
 
 | Endpoint | What it does |
 |---|---|

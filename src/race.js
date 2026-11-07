@@ -16,7 +16,7 @@ import { safeEqual } from './telegram.js';
 import { newId } from './paper.js';
 import { boardsOn, remoteBoards, BOARD_BUSY } from './boards.js';
 
-export const RACE_ORIGINS = ['https://strike.benryan.com.au', 'http://localhost:8766'];
+export const RACE_ORIGINS = ['https://strikedrive.xyz', 'https://strike.benryan.com.au', 'http://localhost:8766'];
 export const RACE_KEEP = 100, RACE_SHOW = 10, RACE_RATE_SEC = 10, RACE_MAX_BODY = 16384, RACE_NAME_MAX = 20;
 /** People who share one public address (a colleague on Tynus's office wifi was told a better time was already on the board,
  * 4 Nov 2026): each device gets its own row, up to this many rows per address, and the post limit is a budget of this many per

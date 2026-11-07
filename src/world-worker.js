@@ -1,4 +1,4 @@
-// copilot-world: the multiplayer room for the Strike ecosystem map (strike.benryan.com.au/ecosystem).
+// copilot-world: the multiplayer room for the Strike ecosystem map (strikedrive.xyz).
 // Its own worker, apart from copilot-watch, so a bad deploy or a Durable Object migration here can never touch the
 // trading alerts. One Durable Object ("main") holds everyone connected; src/world.js is the logic, this file the plumbing.
 import { Room, WORLD_OFF_KEY, WORLD_IDLE_MS, WORLD_VERSION, offChecker } from './world.js';
@@ -56,7 +56,7 @@ export default {
       }
     }
     if (pathname === '/health') return new Response('ok');
-    if (pathname === '/') return new Response('copilot-world: the multiplayer room for strike.benryan.com.au/ecosystem', { headers: { 'content-type': 'text/plain; charset=utf-8' } });
+    if (pathname === '/') return new Response('copilot-world: the multiplayer room for strikedrive.xyz', { headers: { 'content-type': 'text/plain; charset=utf-8' } });
     return new Response('Not found', { status: 404 });
   },
 };

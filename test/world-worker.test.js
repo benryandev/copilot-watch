@@ -19,8 +19,10 @@ test('ws upgrade: wrong origin 403, kill switch 503, otherwise forwarded to the 
   const off = await handler.fetch(ws('/ws'), e);
   assert.equal(off.status, 503); assert.equal((await off.json()).error, 'off');
   await e.KV.delete('world:off');
-  const r = await handler.fetch(ws('/ws', { origin: RACE_ORIGINS[1] }), e);
+  const r = await handler.fetch(ws('/ws', { origin: RACE_ORIGINS.at(-1) }), e);
   assert.deepEqual(await r.json(), { forwarded: '/ws', id: 'id:main' });
+  const sd = await handler.fetch(ws('/ws', { origin: 'https://strikedrive.xyz' }), e);
+  assert.deepEqual(await sd.json(), { forwarded: '/ws', id: 'id:main' });
 });
 
 test('presence is public with CORS for race origins; who and kick need the admin header', async () => {

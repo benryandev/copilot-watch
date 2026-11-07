@@ -1,4 +1,4 @@
-// Project submissions for Builders' Row in the Strike ecosystem world (strike.benryan.com.au/ecosystem/submit/).
+// Project submissions for Builders' Row in the Strike ecosystem world (strikedrive.xyz/submit/).
 // A submission is checked, stored privately and sent to Ben on Telegram; nothing goes live until he approves it and
 // the site is redeployed with the project added (copilot-check ecosystem/js/projects.js).
 //   sub:item:<at>-<id>  the submission (no IP); expires after SUBMIT_KEEP_DAYS
