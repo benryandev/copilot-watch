@@ -16,7 +16,7 @@ export function offChecker(read, ttl = WORLD_OFF_TTL_MS) {
   };
 }
 
-export const WORLD_RADIUS = 400; // m from the world centre: anything further is not a place a car can be
+export const WORLD_RADIUS = 605; // m from the world centre (site world 575 m plus a 30 m margin; the Lagoon is inside it now): anything further is not a place a car can be
 export const WORLD_MAX_SPEED = 40; // m/s, above the car's top speed with a margin for a jump landing
 export const WORLD_FRAME_MAX = 256; // bytes: a pose is ~50, a hi ~80
 

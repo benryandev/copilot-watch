@@ -30,9 +30,9 @@ test('parsePose: accepts a rounded in-bounds pose, rejects garbage', () => {
   assert.equal(parsePose({ t: 'p', x: 0, z: 0, h: 4, s: 0 }).h, 4 - 2 * Math.PI > -Math.PI ? Math.round((4 - 2 * Math.PI) * 100) / 100 : 4);
   assert.equal(parsePose({ t: 'p', x: 0, z: 0, h: 0, s: 40.3 }).s, 40);
   for (const bad of [{ x: NaN, z: 0, h: 0, s: 0 }, { x: '1', z: 0, h: 0, s: 0 }, { x: 1e9, z: 0, h: 0, s: 0 }, { x: 0, z: 0, h: 0, s: 41 },
-    { x: 0, z: 0, h: 0, s: -1 }, { x: 401, z: 0, h: 0, s: 0 }, null, 'p', { x: 0, z: 0, h: Infinity, s: 0 }, { x: 0, z: 0, s: 0 }])
+    { x: 0, z: 0, h: 0, s: -1 }, { x: 606, z: 0, h: 0, s: 0 }, null, 'p', { x: 0, z: 0, h: Infinity, s: 0 }, { x: 0, z: 0, s: 0 }])
     assert.equal(parsePose(bad).ok, false, JSON.stringify(bad));
-  assert.equal(WORLD_RADIUS, 400); assert.equal(WORLD_MAX_SPEED, 40); assert.equal(WORLD_FRAME_MAX, 256);
+  assert.equal(WORLD_RADIUS, 605); assert.equal(parsePose({ x: 565, z: 0, h: 0, s: 0 }).ok, true, "world radius 575 - 10"); assert.equal(parsePose({ x: 605, z: 0, h: 0, s: 0 }).ok, true); assert.equal(WORLD_MAX_SPEED, 40); assert.equal(WORLD_FRAME_MAX, 256);
 });
 
 // ---- the room ----
@@ -607,12 +607,12 @@ test('RACE_CHECKPOINTS comes from the registry', () => {
 
 test('zones: a venue pose beyond the world radius is rejected like any other', () => {
   const r = room(); hi(r, 'b', 'B', 0, { zone: 'realfi-v1' });
-  assert.equal(pose(r, 'b', 0, { x: 400, z: 0 }).close, undefined);
-  assert.equal(r.players.get('b').pose.x, 400);
-  assert.deepEqual(pose(r, 'b', 100, { x: 401 }), { out: [] });
-  assert.deepEqual(pose(r, 'b', 200, { x: 401 }), { out: [] });
-  assert.deepEqual(pose(r, 'b', 300, { x: 401 }), { out: [], close: 'bad' });
-  assert.equal(r.players.get('b').pose.x, 400, 'the bad poses never landed');
+  assert.equal(pose(r, 'b', 0, { x: 605, z: 0 }).close, undefined);
+  assert.equal(r.players.get('b').pose.x, 605);
+  assert.deepEqual(pose(r, 'b', 100, { x: 606 }), { out: [] });
+  assert.deepEqual(pose(r, 'b', 200, { x: 606 }), { out: [] });
+  assert.deepEqual(pose(r, 'b', 300, { x: 606 }), { out: [], close: 'bad' });
+  assert.equal(r.players.get('b').pose.x, 605, 'the bad poses never landed');
 });
 
 // ---- device dedupe: one socket per device ----
