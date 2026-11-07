@@ -669,3 +669,34 @@ test('zones: live-race traffic is hub only; a venue player hears none of a hub r
   assert.ok(to(end.out, 'p0').find(m => m.t === 'race.end'), 'the hub heard the end');
   assert.deepEqual(heard.filter(m => String(m.t).startsWith('race.')), [], 'the venue heard none of it');
 });
+
+// ---- car designs: each player's chosen car reaches the others ----
+test('car: hi with car 0..3 is kept, shown to peers in ok and join, and absent when unset', () => {
+  for (const car of [0, 1, 2, 3]) {
+    const r = room(); hi(r, 'a', 'A', 0, { car });
+    const res = hi(r, 'b', 'B', 10);
+    const ok = to(res.out, 'b').find(m => m.t === 'ok');
+    assert.equal(ok.peers[0].car, car, 'the joiner sees the earlier player\'s car');
+    assert.equal('car' in r.peerView(r.players.get('b')), false, 'no car sent, none shown');
+    const res2 = hi(r, 'c', 'C', 20, { car });
+    assert.equal(to(res2.out, 'a').find(m => m.t === 'join').car, car, 'the join carries it');
+    assert.equal('car' in to(res.out, 'a').find(m => m.t === 'join'), false, 'a join without car has none');
+  }
+});
+
+test('car: anything but an integer 0..3 is dropped', () => {
+  for (const car of [4, -1, 1.5, '2', null, true, [], {}, NaN]) {
+    const r = room(); hi(r, 'a', 'A', 0, { car });
+    assert.equal('car' in r.peerView(r.players.get('a')), false, JSON.stringify(car));
+    assert.equal('car' in r.attachment('a'), false, JSON.stringify(car));
+  }
+});
+
+test('car: the attachment keeps it through a wake-up; a junk stored car is dropped', () => {
+  const r = room(); hi(r, 'a', 'A', 0, { car: 2 }); hi(r, 'b', 'B', 0);
+  assert.equal(r.attachment('a').car, 2); assert.equal('car' in r.attachment('b'), false);
+  const r2 = room(); r2.restore(['a', 'b'].map(id => r.attachment(id)));
+  assert.equal(r2.peerView(r2.players.get('a')).car, 2); assert.equal('car' in r2.peerView(r2.players.get('b')), false);
+  const r3 = room(); r3.restore([{ id: 'x', name: 'X', colour: '#fff', ipKey: 'kx', since: 0, car: 9 }]);
+  assert.equal('car' in r3.peerView(r3.players.get('x')), false);
+});

@@ -117,6 +117,12 @@ const DUP_ERR = { t: 'err', error: 'dup', why: 'This device is driving in anothe
 export const EMOTE_COUNT = 5;
 export const EMOTE_MAX_HZ = 2; // per socket per second; each one fans out to the room
 
+// ── Car designs: the page saves one per device and sends its index on hi; the room only relays it ──
+export const CAR_COUNT = 4;
+/** A car design is an integer 0..CAR_COUNT-1; anything else is absent (null), so an old client simply has none. */
+export const parseCar = c => (Number.isInteger(c) && c >= 0 && c < CAR_COUNT ? c : null);
+const carOf = p => (p.car !== null && p.car !== undefined ? { car: p.car } : {});
+
 export const COLOURS = ['#22d3ee', '#facc15', '#ec4899', '#3b82f6', '#f97316', '#a78bfa', '#0fb89c', '#94a3b8'];
 
 const msg = (to, m) => [to, m];
@@ -155,14 +161,14 @@ export class Room {
     if (this.blocked('s:' + id, now) || this.blocked('i:' + ipKey, now)) return { ok: false, error: 'blocked' };
     if ([...this.players.values()].filter(p => p.ipKey === ipKey).length >= WORLD_IP_MAX) return { ok: false, error: 'ip' };
     if (this.players.size >= WORLD_MAX) return { ok: false, error: 'full' };
-    this.players.set(id, { id, ipKey, since: now, joined: false, name: null, colour: null, zone: 'hub', device: null, pose: null, times: [], pings: [], races: [], emotes: [], dropped: [], lastJump: -Infinity, bad: 0, renamedAt: -Infinity, lastMsg: now });
+    this.players.set(id, { id, ipKey, since: now, joined: false, name: null, colour: null, zone: 'hub', device: null, car: null, pose: null, times: [], pings: [], races: [], emotes: [], dropped: [], lastJump: -Infinity, bad: 0, renamedAt: -Infinity, lastMsg: now });
     return { ok: true };
   }
 
   /** What the shell stores on the socket so the roster survives hibernation. */
   attachment(id) {
     const p = this.players.get(id);
-    return p?.joined ? { id: p.id, name: p.name, colour: p.colour, ipKey: p.ipKey, since: p.since, heardAt: p.lastMsg, ...(p.zone !== 'hub' ? { zone: p.zone } : {}), ...(p.device ? { device: p.device } : {}) } : null; // hub and no device are the defaults, left out
+    return p?.joined ? { id: p.id, name: p.name, colour: p.colour, ipKey: p.ipKey, since: p.since, heardAt: p.lastMsg, ...(p.zone !== 'hub' ? { zone: p.zone } : {}), ...(p.device ? { device: p.device } : {}), ...carOf(p) } : null; // hub, no device and no car are the defaults, left out
   }
 
   /** Rebuild joined players from stored attachments after a wake-up. */
@@ -170,7 +176,7 @@ export class Room {
     for (const e of entries) {
       if (!e?.id) continue;
       // Last heard is what the attachment says (refreshed every 30 s of messages), else when it joined: a wake-up must not make a dead socket look alive
-      this.players.set(e.id, { id: e.id, ipKey: e.ipKey, since: e.since, joined: true, name: e.name, colour: e.colour, zone: parseZone(e.zone), device: parseDevice(e.device), pose: null, times: [], pings: [], races: [], emotes: [], dropped: [], lastJump: -Infinity, bad: 0, renamedAt: -Infinity, lastMsg: e.heardAt ?? e.since ?? now });
+      this.players.set(e.id, { id: e.id, ipKey: e.ipKey, since: e.since, joined: true, name: e.name, colour: e.colour, zone: parseZone(e.zone), device: parseDevice(e.device), car: parseCar(e.car), pose: null, times: [], pings: [], races: [], emotes: [], dropped: [], lastJump: -Infinity, bad: 0, renamedAt: -Infinity, lastMsg: e.heardAt ?? e.since ?? now });
       this.colourN++;
     }
   }
@@ -185,7 +191,7 @@ export class Room {
   /** The head count everyone hears on join, leave and kick. */
   count() { return { t: 'n', online: this.online(), zones: this.zones() }; }
 
-  peerView(p) { return { id: p.id, name: p.name, colour: p.colour, zone: p.zone, ...(p.pose ? { x: p.pose.x, z: p.pose.z, h: p.pose.h, s: p.pose.s } : {}) }; }
+  peerView(p) { return { id: p.id, name: p.name, colour: p.colour, zone: p.zone, ...carOf(p), ...(p.pose ? { x: p.pose.x, z: p.pose.z, h: p.pose.h, s: p.pose.s } : {}) }; }
 
   /** One frame from a socket. Returns the messages to send, whether to close, and when to flush a held snapshot. */
   onMessage(id, raw, now) {
@@ -218,13 +224,14 @@ export class Room {
       }
       p.name = pickName(m.name, { ...this.grant(m.owner), taken: this.taken(), next: () => this.nextDriver() }).name;
       p.colour = COLOURS[this.colourN++ % COLOURS.length];
+      p.car = parseCar(m.car);
       p.zone = parseZone(m.zone); // set once, on hi: a venue is its own page, so changing zone is a new socket
       p.joined = true; p.bad = 0;
       const peers = this.joined().filter(o => o !== p).map(o => this.peerView(o));
       const race = p.zone === 'hub' && this.race && this.race.state !== 'done' ? { ...this.raceView(), t: undefined, state: this.race.state, order: this.order() } : null;
       if (race) delete race.t;
       const res = { out: [...dupOut, msg(id, { t: 'ok', id, name: p.name, colour: p.colour, now, peers, zones: this.zones(), race }),
-        ...this.broadcast({ t: 'join', id, name: p.name, colour: p.colour, zone: p.zone }, id), ...this.broadcast(this.count(), id)] };
+        ...this.broadcast({ t: 'join', id, name: p.name, colour: p.colour, zone: p.zone, ...carOf(p) }, id), ...this.broadcast(this.count(), id)] };
       if (dups.length) res.closeOthers = dups.map(o => ({ id: o.id, reason: 'dup' })); // the shell closes these sockets
       if (dupRace) res.raceChanged = true;
       return res;
