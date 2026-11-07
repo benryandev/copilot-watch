@@ -129,3 +129,25 @@ test('still one race at a time: a Lagoon race open makes a RealFi open a join', 
   const j = send(r, 'b', { t: 'race.open', track: 'realfi-v1' }, 100);
   assert.equal(to(j.out, 'b')[0].t, 'race.grid'); assert.equal(r.race.track, 'lagoon-v2'); assert.equal(r.race.entrants.size, 2);
 });
+
+test('review M2: a tab without the flag cannot choose a track: its race.open is RealFi whatever it sends', () => {
+  for (const track of ['lagoon-v2', 'realfi-v1', 'junk', 7]) {
+    const r = room(); hi(r, 'old', 'Old', 0, {}); hi(r, 'b', 'B');
+    const { out } = send(r, 'old', { t: 'race.open', track }, 1000);
+    assert.equal(r.race.track, 'realfi-v1', JSON.stringify(track));
+    assert.equal(to(out, 'old')[0].t, 'race.open', 'the host hears its own race');
+  }
+});
+
+test('review M4: the old tab is told to reload to join only while the race is open; after that, to join the next one', () => {
+  const r = room(); hi(r, 'a', 'A'); hi(r, 'b', 'B'); hi(r, 'old', 'Old', 0, {});
+  send(r, 'a', { t: 'race.open', track: 'lagoon-v2' }, 0); send(r, 'b', { t: 'race.join' }, 1);
+  assert.deepEqual(send(r, 'old', { t: 'race.join' }, 100).out, [['old', OLD_ERR]], 'open: reload to join it');
+  const NEXT = { t: 'err', error: 'race_zone', why: 'A race is on at The Lagoon. Reload the page to join the next one' };
+  r.timers(17_000); assert.equal(r.race.state, 'countdown');
+  assert.deepEqual(send(r, 'old', { t: 'race.join' }, 17_500).out, [['old', NEXT]], 'countdown');
+  assert.deepEqual(send(r, 'old', { t: 'race.open' }, 18_600).out, [['old', NEXT]], 'countdown, through open');
+  r.timers(20_000); assert.equal(r.race.state, 'running');
+  assert.deepEqual(send(r, 'old', { t: 'race.open' }, 21_000).out, [['old', NEXT]], 'running');
+  assert.ok(NEXT.why.length <= 120, 'under the old page\'s cap');
+});

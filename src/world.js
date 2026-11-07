@@ -119,7 +119,7 @@ const RACE_ZONE_ERR = { t: 'err', error: 'race_zone', why: 'Live races run at th
 /** A race.open naming no race track (from a page that knows about tracks): `names` are the race tracks' places. */
 const raceTrackErr = ids => ({ t: 'err', error: 'race_track', why: `Live races run on ${ids.map(placeOf).join(' and ').replace(/ and (?=.* and )/g, ', ')}` });
 /** A page from before tracks pressing Race while a race it cannot see is open: race_zone, whose words such a page shows. */
-const raceOldErr = track => ({ t: 'err', error: 'race_zone', why: `A race is on at ${raceTrack(track)?.name ?? 'another track'}. Reload the page to join it` });
+const raceOldErr = r => ({ t: 'err', error: 'race_zone', why: `A race is on at ${raceTrack(r.track)?.name ?? 'another track'}. Reload the page to join ${r.state === 'open' ? 'it' : 'the next one'}` });
 // One socket per device: a device joining again (a second tab, a reload before the old socket died) closes the older one
 const DUP_ERR = { t: 'err', error: 'dup', why: 'This device is driving in another tab' };
 // ── Emotes: a wave, a party, fire, a flag, a thumbs up (the page draws them; the room only relays an index) ──
@@ -308,8 +308,8 @@ export class Room {
     const p = this.players.get(id);
     if (p.zone !== 'hub') return { out: [msg(id, RACE_ZONE_ERR)] };
     if (this.race && this.race.state === 'open') return this.joinRace(id, now);
-    if (this.race && this.race.state !== 'done') return { out: [msg(id, this.seesRace(p, this.race) ? { t: 'err', error: 'race_running' } : raceOldErr(this.race.track))] };
-    if (!p.raceTracks && track === undefined) track = WORLD_HUB_TRACK;
+    if (this.race && this.race.state !== 'done') return { out: [msg(id, this.seesRace(p, this.race) ? { t: 'err', error: 'race_running' } : raceOldErr(this.race))] };
+    if (!p.raceTracks) track = WORLD_HUB_TRACK; // a page that did not announce tracks races on RealFi, whatever it sends: it could not see a race anywhere else
     if (typeof track !== 'string' || !this.raceTracks.includes(track) || !raceTrack(track)) return { out: [msg(id, raceTrackErr(this.raceTracks))] };
     this.race = { id: crypto.randomUUID().slice(0, 8), host: id, hostName: p.name, track, state: 'open', openedAt: now, startsAt: now + RACE_JOIN_MS, entrants: new Map([[id, { slot: 1, name: p.name, cps: [], fin: null, dnf: false }]]), firstFinAt: null, endedAt: null };
     return { out: this.raceCast(this.raceView()), raceChanged: true };
@@ -318,7 +318,7 @@ export class Room {
     const r = this.race, p = this.players.get(id);
     if (p.zone !== 'hub') return { out: [msg(id, RACE_ZONE_ERR)] };
     if (!r || r.state === 'done') return { out: [msg(id, { t: 'err', error: 'race_none' })] };
-    if (!this.seesRace(p, r)) return { out: [msg(id, raceOldErr(r.track))] };
+    if (!this.seesRace(p, r)) return { out: [msg(id, raceOldErr(r))] };
     if (r.state !== 'open') return { out: [msg(id, { t: 'err', error: 'race_running' })] };
     if (r.entrants.has(id)) return { out: [] };
     const used = new Set([...r.entrants.values()].map(e => e.slot));
