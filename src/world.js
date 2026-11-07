@@ -3,7 +3,7 @@
 import { cleanName, parseDevice } from './race.js';
 import { raceTrack, TRACK_IDS } from './race-tracks.js';
 
-export const WORLD_VERSION = '2026-11-06.1'; // bumped on deploy so /presence shows which code the room runs
+export const WORLD_VERSION = '2026-11-07.1'; // bumped on deploy so /presence shows which code the room runs
 export const WORLD_OFF_KEY = 'world:off'; // any value under this KV key pauses new connections and closes live ones
 export const WORLD_OFF_TTL_MS = 30_000; // how long the room trusts its last read of the kill switch
 
@@ -97,12 +97,17 @@ export const RACE_DEAD_HEAT_MS = 100; // finishes closer than this share a posit
 export const RACE_KEEP_MS = 300_000; // a finished race is kept this long for the sheets
 export const RACE_MAX_RUN_MS = 300_000; // a race nobody finishes ends on its own this long after the start
 export const RACE_MSG_MAX_HZ = 2; // race.open/join/leave per second per socket
-// Live races run on the hub's track only. Its checkpoint count comes from the registry; a hub track that is missing or
-// not open fails the import, so a deploy with a broken registry fails loudly rather than racing on a wrong count.
+// Live races run on the hub's race tracks (every track in the one world, 7 Nov 2026): race.open names the host's track.
+// Each one's checkpoint count comes from the registry; a race track that is missing or not open fails the import, so a
+// deploy with a broken registry fails loudly rather than racing on a wrong count. WORLD_HUB_TRACK is the track of a race
+// opened by a page from before tracks (no raceTracks in its hi, no track in its open), and the only one such pages hear.
 export const WORLD_HUB_TRACK = 'realfi-v1';
-const hubTrack = raceTrack(WORLD_HUB_TRACK);
-if (!hubTrack) throw new Error(`world: the hub track ${WORLD_HUB_TRACK} is not open in the registry`);
-export const RACE_CHECKPOINTS = hubTrack.checkpoints.length;
+export const WORLD_RACE_TRACKS = Object.freeze(['realfi-v1', 'lagoon-v2']);
+for (const id of WORLD_RACE_TRACKS) if (!raceTrack(id)) throw new Error(`world: the race track ${id} is not open in the registry`);
+if (!WORLD_RACE_TRACKS.includes(WORLD_HUB_TRACK)) throw new Error(`world: the hub track ${WORLD_HUB_TRACK} is not a race track`);
+export const RACE_CHECKPOINTS = raceTrack(WORLD_HUB_TRACK).checkpoints.length; // RealFi's: a page from before tracks races there
+/** "The Lagoon" as it is; "RealFi Raceway" as "the RealFi Raceway". */
+const placeOf = id => { const n = raceTrack(id)?.name ?? id; return /^the /i.test(n) ? n : `the ${n}`; };
 // ── Zones: the hub and each venue page share the room, but see and hear only their own zone ──
 export const ZONE_RE = /^[a-z0-9-]{1,16}$/;
 /** Track ids gone from the registry that still name their own zone. A page cached before a relay deploy keeps its old
@@ -111,6 +116,10 @@ export const RETIRED_ZONES = Object.freeze(['lagoon-v1']);
 /** A zone is `hub`, a key of src/tracks.json (open or not) or a retired id; anything else is the hub. `ids` is a test seam. */
 export const parseZone = (z, ids = TRACK_IDS) => (typeof z === 'string' && ZONE_RE.test(z) && (z === 'hub' || ids.includes(z) || RETIRED_ZONES.includes(z)) ? z : 'hub');
 const RACE_ZONE_ERR = { t: 'err', error: 'race_zone', why: 'Live races run at the Raceway for now' };
+/** A race.open naming no race track (from a page that knows about tracks): `names` are the race tracks' places. */
+const raceTrackErr = ids => ({ t: 'err', error: 'race_track', why: `Live races run on ${ids.map(placeOf).join(' and ').replace(/ and (?=.* and )/g, ', ')}` });
+/** A page from before tracks pressing Race while a race it cannot see is open: race_zone, whose words such a page shows. */
+const raceOldErr = track => ({ t: 'err', error: 'race_zone', why: `A race is on at ${raceTrack(track)?.name ?? 'another track'}. Reload the page to join it` });
 // One socket per device: a device joining again (a second tab, a reload before the old socket died) closes the older one
 const DUP_ERR = { t: 'err', error: 'dup', why: 'This device is driving in another tab' };
 // ── Emotes: a wave, a party, fire, a flag, a thumbs up (the page draws them; the room only relays an index) ──
@@ -130,7 +139,7 @@ const msg = (to, m) => [to, m];
 export class Room {
   /** @param {{ownerToken?: string, blocks?: Record<string, number>}} o blocks: kick blocks keyed s:<id> / i:<ipKey> → until ms */
   /** guests: { token: [names] } lets a named person (Shan, say) wear their own reserved name and nothing else */
-  constructor({ ownerToken = null, guests = {}, blocks = {} } = {}) {
+  constructor({ ownerToken = null, guests = {}, blocks = {}, raceTracks = WORLD_RACE_TRACKS } = {}) {
     this.ownerToken = ownerToken;
     this.guests = new Map(Object.entries(guests || {}).filter(([t, names]) => t && Array.isArray(names)).map(([t, names]) => [t, new Set(names.map(fold))]));
     this.blocks = { ...blocks };
@@ -140,6 +149,7 @@ export class Room {
     this.lastSnap = -Infinity;
     this.dirty = new Set();
     this.race = null; // the live race, if any (see openRace)
+    this.raceTracks = [...raceTracks]; // the tracks a race may run on (a test seam; WORLD_RACE_TRACKS)
   }
 
   /** What a presented token permits: {owner} for Ben's, {allow} for a guest's, nothing otherwise. */
@@ -161,14 +171,14 @@ export class Room {
     if (this.blocked('s:' + id, now) || this.blocked('i:' + ipKey, now)) return { ok: false, error: 'blocked' };
     if ([...this.players.values()].filter(p => p.ipKey === ipKey).length >= WORLD_IP_MAX) return { ok: false, error: 'ip' };
     if (this.players.size >= WORLD_MAX) return { ok: false, error: 'full' };
-    this.players.set(id, { id, ipKey, since: now, joined: false, name: null, colour: null, zone: 'hub', device: null, car: null, pose: null, times: [], pings: [], races: [], emotes: [], dropped: [], lastJump: -Infinity, bad: 0, renamedAt: -Infinity, lastMsg: now });
+    this.players.set(id, { id, ipKey, since: now, joined: false, name: null, colour: null, zone: 'hub', device: null, car: null, raceTracks: false, pose: null, times: [], pings: [], races: [], emotes: [], dropped: [], lastJump: -Infinity, bad: 0, renamedAt: -Infinity, lastMsg: now });
     return { ok: true };
   }
 
   /** What the shell stores on the socket so the roster survives hibernation. */
   attachment(id) {
     const p = this.players.get(id);
-    return p?.joined ? { id: p.id, name: p.name, colour: p.colour, ipKey: p.ipKey, since: p.since, heardAt: p.lastMsg, ...(p.zone !== 'hub' ? { zone: p.zone } : {}), ...(p.device ? { device: p.device } : {}), ...carOf(p) } : null; // hub, no device and no car are the defaults, left out
+    return p?.joined ? { id: p.id, name: p.name, colour: p.colour, ipKey: p.ipKey, since: p.since, heardAt: p.lastMsg, ...(p.zone !== 'hub' ? { zone: p.zone } : {}), ...(p.device ? { device: p.device } : {}), ...carOf(p), ...(p.raceTracks ? { rt: 1 } : {}) } : null; // hub, no device, no car and a page from before tracks are the defaults, left out
   }
 
   /** Rebuild joined players from stored attachments after a wake-up. */
@@ -176,7 +186,7 @@ export class Room {
     for (const e of entries) {
       if (!e?.id) continue;
       // Last heard is what the attachment says (refreshed every 30 s of messages), else when it joined: a wake-up must not make a dead socket look alive
-      this.players.set(e.id, { id: e.id, ipKey: e.ipKey, since: e.since, joined: true, name: e.name, colour: e.colour, zone: parseZone(e.zone), device: parseDevice(e.device), car: parseCar(e.car), pose: null, times: [], pings: [], races: [], emotes: [], dropped: [], lastJump: -Infinity, bad: 0, renamedAt: -Infinity, lastMsg: e.heardAt ?? e.since ?? now });
+      this.players.set(e.id, { id: e.id, ipKey: e.ipKey, since: e.since, joined: true, name: e.name, colour: e.colour, zone: parseZone(e.zone), device: parseDevice(e.device), car: parseCar(e.car), raceTracks: e.rt === 1, pose: null, times: [], pings: [], races: [], emotes: [], dropped: [], lastJump: -Infinity, bad: 0, renamedAt: -Infinity, lastMsg: e.heardAt ?? e.since ?? now });
       this.colourN++;
     }
   }
@@ -184,8 +194,10 @@ export class Room {
   broadcast(m, except = null) { return this.joined().filter(p => p.id !== except).map(p => msg(p.id, m)); }
   /** The same, to one zone only. */
   broadcastZone(m, zone, except = null) { return this.joined().filter(p => p.zone === zone && p.id !== except).map(p => msg(p.id, m)); }
-  /** Live-race traffic: the race runs at the Raceway, so only the hub hears it. */
-  raceCast(m) { return this.broadcastZone(m, 'hub'); }
+  /** Live-race traffic for race `r`: only the hub hears it, and a race off the hub track only pages that know about tracks. */
+  raceCast(m, r = this.race) { return this.joined().filter(p => this.seesRace(p, r)).map(p => msg(p.id, m)); }
+  /** Whether player `p` may see (and join) race `r`: in the hub, and on a page that can drive to its track. */
+  seesRace(p, r) { return p.zone === 'hub' && (p.raceTracks || r?.track === WORLD_HUB_TRACK); }
   /** Joined players per zone, e.g. { hub: 2, 'lagoon-v1': 1 }; a zone with nobody in it is left out. */
   zones() { const z = {}; for (const p of this.players.values()) if (p.joined) z[p.zone] = (z[p.zone] ?? 0) + 1; return z; }
   /** The head count everyone hears on join, leave and kick. */
@@ -226,9 +238,10 @@ export class Room {
       p.colour = COLOURS[this.colourN++ % COLOURS.length];
       p.car = parseCar(m.car);
       p.zone = parseZone(m.zone); // set once, on hi: a venue is its own page, so changing zone is a new socket
+      p.raceTracks = m.raceTracks === true; // a page that sends race.open with its track and can drive to any race track
       p.joined = true; p.bad = 0;
       const peers = this.joined().filter(o => o !== p).map(o => this.peerView(o));
-      const race = p.zone === 'hub' && this.race && this.race.state !== 'done' ? { ...this.raceView(), t: undefined, state: this.race.state, order: this.order() } : null;
+      const race = this.race && this.race.state !== 'done' && this.seesRace(p, this.race) ? { ...this.raceView(), t: undefined, state: this.race.state, order: this.order() } : null;
       if (race) delete race.t;
       const res = { out: [...dupOut, msg(id, { t: 'ok', id, name: p.name, colour: p.colour, now, peers, zones: this.zones(), race }),
         ...this.broadcast({ t: 'join', id, name: p.name, colour: p.colour, zone: p.zone, ...carOf(p) }, id), ...this.broadcast(this.count(), id)] };
@@ -269,7 +282,7 @@ export class Room {
     if (m.t === 'race.open' || m.t === 'race.join' || m.t === 'race.leave') {
       p.bad = 0;
       if (over(p.races, RACE_MSG_MAX_HZ)) return flooded(); // each one fans out to the whole room
-      return m.t === 'race.open' ? this.openRace(id, now) : m.t === 'race.join' ? this.joinRace(id, now) : this.leaveRace(id, now);
+      return m.t === 'race.open' ? this.openRace(id, now, m.track) : m.t === 'race.join' ? this.joinRace(id, now) : this.leaveRace(id, now);
     }
     if (m.t === 'race.cp' || m.t === 'race.fin') {
       const res = m.t === 'race.cp' ? this.checkpoint(id, m.i, now) : this.finish(id, m.ms, now);
@@ -286,20 +299,26 @@ export class Room {
     if (!this.race) return [];
     return [...this.race.entrants].map(([id, e]) => ({ id, name: this.players.get(id)?.name ?? e.name, slot: e.slot })).sort((a, b) => a.slot - b.slot);
   }
-  raceView() { const r = this.race; return { t: 'race.open', id: r.id, host: r.host, name: r.hostName, startsAt: r.startsAt, grid: this.grid() }; }
-  /** Race pressed: a new race with this player in slot 1, or a join if one is open. */
-  openRace(id, now) {
+  raceView() { const r = this.race; return { t: 'race.open', id: r.id, host: r.host, name: r.hostName, track: r.track, startsAt: r.startsAt, grid: this.grid() }; }
+  /** The checkpoint count of race `r`'s track. */
+  raceCps(r) { return raceTrack(r.track).checkpoints.length; }
+  /** Race pressed: a new race on `track` (the host's active track) with this player in slot 1, or a join if one is open.
+   * A page from before tracks sends none and races on WORLD_HUB_TRACK; a page that knows tracks must name a race track. */
+  openRace(id, now, track) {
     const p = this.players.get(id);
     if (p.zone !== 'hub') return { out: [msg(id, RACE_ZONE_ERR)] };
     if (this.race && this.race.state === 'open') return this.joinRace(id, now);
-    if (this.race && this.race.state !== 'done') return { out: [msg(id, { t: 'err', error: 'race_running' })] };
-    this.race = { id: crypto.randomUUID().slice(0, 8), host: id, hostName: p.name, state: 'open', openedAt: now, startsAt: now + RACE_JOIN_MS, entrants: new Map([[id, { slot: 1, name: p.name, cps: [], fin: null, dnf: false }]]), firstFinAt: null, endedAt: null };
+    if (this.race && this.race.state !== 'done') return { out: [msg(id, this.seesRace(p, this.race) ? { t: 'err', error: 'race_running' } : raceOldErr(this.race.track))] };
+    if (!p.raceTracks && track === undefined) track = WORLD_HUB_TRACK;
+    if (typeof track !== 'string' || !this.raceTracks.includes(track) || !raceTrack(track)) return { out: [msg(id, raceTrackErr(this.raceTracks))] };
+    this.race = { id: crypto.randomUUID().slice(0, 8), host: id, hostName: p.name, track, state: 'open', openedAt: now, startsAt: now + RACE_JOIN_MS, entrants: new Map([[id, { slot: 1, name: p.name, cps: [], fin: null, dnf: false }]]), firstFinAt: null, endedAt: null };
     return { out: this.raceCast(this.raceView()), raceChanged: true };
   }
   joinRace(id) {
     const r = this.race, p = this.players.get(id);
     if (p.zone !== 'hub') return { out: [msg(id, RACE_ZONE_ERR)] };
     if (!r || r.state === 'done') return { out: [msg(id, { t: 'err', error: 'race_none' })] };
+    if (!this.seesRace(p, r)) return { out: [msg(id, raceOldErr(r.track))] };
     if (r.state !== 'open') return { out: [msg(id, { t: 'err', error: 'race_running' })] };
     if (r.entrants.has(id)) return { out: [] };
     const used = new Set([...r.entrants.values()].map(e => e.slot));
@@ -314,7 +333,7 @@ export class Room {
     if (!r || !r.entrants.has(id)) return { out: [] };
     if (r.state === 'open' || r.state === 'countdown') {
       r.entrants.delete(id);
-      if (r.state === 'countdown' && r.entrants.size === 0) { this.race = null; return { out: this.raceCast({ t: 'race.cancel', id: r.id, why: 'Nobody left' }), raceChanged: true }; }
+      if (r.state === 'countdown' && r.entrants.size === 0) { this.race = null; return { out: this.raceCast({ t: 'race.cancel', id: r.id, why: 'Nobody left' }, r), raceChanged: true }; }
       return { out: this.raceCast({ t: 'race.grid', id: r.id, grid: this.grid() }), raceChanged: true };
     }
     const e = r.entrants.get(id);
@@ -328,7 +347,8 @@ export class Room {
   /** The race as plain data for the shell to persist (entrants as pairs), and back. */
   raceState() { const r = this.race; return r ? { ...r, entrants: [...r.entrants] } : null; }
   restoreRace(st, now = Date.now()) {
-    this.race = st && typeof st === 'object' && Array.isArray(st.entrants) ? { ...st, entrants: new Map(st.entrants) } : null;
+    this.race = st && typeof st === 'object' && Array.isArray(st.entrants) ? { ...st, track: st.track ?? WORLD_HUB_TRACK, entrants: new Map(st.entrants) } : null; // stored before tracks: RealFi
+    if (this.race && !(this.raceTracks.includes(this.race.track) && raceTrack(this.race.track))) this.race = null; // a track no longer raced
     const r = this.race;
     if (!r || r.state === 'done') return { out: [] };
     // After a restart nobody keeps their socket id: entrants who have not come back are out of the race
@@ -357,10 +377,10 @@ export class Room {
       if (d == null || d > now) break;
       raceChanged = true;
       if (r.state === 'open') {
-        if (r.entrants.size < 2) { out.push(...this.raceCast({ t: 'race.cancel', id: r.id, why: 'Nobody joined' })); this.race = null; }
+        if (r.entrants.size < 2) { out.push(...this.raceCast({ t: 'race.cancel', id: r.id, why: 'Nobody joined' }, r)); this.race = null; }
         else { r.state = 'countdown'; out.push(...this.raceCast({ t: 'race.go', id: r.id, startsAt: r.startsAt })); }
       } else if (r.state === 'countdown') {
-        if (r.entrants.size === 0) { out.push(...this.raceCast({ t: 'race.cancel', id: r.id, why: 'Nobody left' })); this.race = null; }
+        if (r.entrants.size === 0) { out.push(...this.raceCast({ t: 'race.cancel', id: r.id, why: 'Nobody left' }, r)); this.race = null; }
         else r.state = 'running';
       }
       else if (r.state === 'running') out.push(...this.endRace(now));
@@ -380,7 +400,7 @@ export class Room {
     if (!r || !r.entrants.has(id)) return 'bad';
     const e = r.entrants.get(id);
     if (r.state !== 'running' || e.fin || e.dnf) return { out: [] };
-    if (!Number.isInteger(i) || i !== e.cps.length + 1 || i > RACE_CHECKPOINTS) return { out: [] };
+    if (!Number.isInteger(i) || i !== e.cps.length + 1 || i > this.raceCps(r)) return { out: [] };
     e.cps.push(now - r.startsAt);
     return { out: this.raceCast({ t: 'race.pos', id: r.id, order: this.order() }), raceChanged: true };
   }
@@ -390,7 +410,7 @@ export class Room {
     const r = this.race;
     if (!r || !r.entrants.has(id)) return 'bad';
     const e = r.entrants.get(id);
-    if (r.state !== 'running' || e.fin || e.dnf || e.cps.length < RACE_CHECKPOINTS) return { out: [] };
+    if (r.state !== 'running' || e.fin || e.dnf || e.cps.length < this.raceCps(r)) return { out: [] };
     e.fin = { at: now - r.startsAt, ms: Number.isFinite(ms) && ms > 0 && ms <= 600_000 ? Math.round(ms) : null };
     if (r.firstFinAt == null) r.firstFinAt = now;
     const done = [...r.entrants.values()].every(x => x.fin || x.dnf);
