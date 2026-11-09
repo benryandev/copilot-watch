@@ -127,7 +127,7 @@ export const EMOTE_COUNT = 5;
 export const EMOTE_MAX_HZ = 2; // per socket per second; each one fans out to the room
 
 // ── Car designs: the page saves one per device and sends its index on hi; the room only relays it ──
-export const CAR_COUNT = 4;
+export const CAR_COUNT = 5; // car, car A, car B, car C, the trophy truck (9 Nov 2026)
 /** A car design is an integer 0..CAR_COUNT-1; anything else is absent (null), so an old client simply has none. */
 export const parseCar = c => (Number.isInteger(c) && c >= 0 && c < CAR_COUNT ? c : null);
 const carOf = p => (p.car !== null && p.car !== undefined ? { car: p.car } : {});

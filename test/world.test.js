@@ -671,8 +671,8 @@ test('zones: live-race traffic is hub only; a venue player hears none of a hub r
 });
 
 // ---- car designs: each player's chosen car reaches the others ----
-test('car: hi with car 0..3 is kept, shown to peers in ok and join, and absent when unset', () => {
-  for (const car of [0, 1, 2, 3]) {
+test('car: hi with car 0..4 is kept, shown to peers in ok and join, and absent when unset', () => {
+  for (const car of [0, 1, 2, 3, 4]) {
     const r = room(); hi(r, 'a', 'A', 0, { car });
     const res = hi(r, 'b', 'B', 10);
     const ok = to(res.out, 'b').find(m => m.t === 'ok');
@@ -684,8 +684,8 @@ test('car: hi with car 0..3 is kept, shown to peers in ok and join, and absent w
   }
 });
 
-test('car: anything but an integer 0..3 is dropped', () => {
-  for (const car of [4, -1, 1.5, '2', null, true, [], {}, NaN]) {
+test('car: anything but an integer 0..4 is dropped', () => {
+  for (const car of [5, -1, 1.5, '2', null, true, [], {}, NaN]) {
     const r = room(); hi(r, 'a', 'A', 0, { car });
     assert.equal('car' in r.peerView(r.players.get('a')), false, JSON.stringify(car));
     assert.equal('car' in r.attachment('a'), false, JSON.stringify(car));
