@@ -1,5 +1,5 @@
 import test from 'node:test'; import assert from 'node:assert/strict';
-import { handleRaceApi, parseTime, parseTrace, isRude, cleanName, hashHex, RACE_ORIGINS, RACE_KEEP, RACE_SHOW, RACE_ADMIN_HEADER, RACE_TRACE_MAX, RACE_MAX_BODY, RACE_RATE_SEC, RACE_RATE_BURST, RACE_ADDR_ROWS } from '../src/race.js';
+import { handleRaceApi, uaClass, parseTime, parseTrace, isRude, cleanName, hashHex, RACE_ORIGINS, RACE_KEEP, RACE_SHOW, RACE_ADMIN_HEADER, RACE_TRACE_MAX, RACE_MAX_BODY, RACE_RATE_SEC, RACE_RATE_BURST, RACE_ADDR_ROWS } from '../src/race.js';
 import { RACE_TRACKS, RACE_MAX_MS, raceTrack } from '../src/race-tracks.js';
 import handler from '../src/worker.js';
 import { memKV } from './kv-mem.js';
@@ -333,6 +333,32 @@ test('admin delete: token required and checked, unset env denies, deletes by id 
   assert.equal((await del({ track: TRACK, name: 'Alpha' }, H)).status, 404);
   assert.equal((await del({ track: 'nope', name: 'Charlie' }, H)).status, 400);
   assert.equal((await del({ track: TRACK }, H)).status, 400);
+});
+
+test('funnel: a counted open logs one broad line (country, network, browser kind, referrer host), never the address', async () => {
+  const e = env({ RACE_ADMIN_TOKEN: ADMIN });
+  const lines = [], was = console.log;
+  console.log = (...a) => lines.push(a);
+  try {
+    const open = (ip, o = {}) => {
+      const r = req('POST', '/race/event', { ip, body: { track: TRACK, kind: o.kind ?? 'open', ...(o.ref !== undefined ? { ref: o.ref } : {}) }, headers: { 'content-type': 'text/plain', ...(o.ua ? { 'user-agent': o.ua } : {}) } });
+      if (o.cf) Object.defineProperty(r, 'cf', { value: o.cf });
+      return handleRaceApi(r, e, { now: NOW });
+    };
+    await open('7.7.7.1', { ref: 'x.com', ua: 'Mozilla/5.0 (iPhone; CPU iPhone OS 27_2 like Mac OS X) Mobile/15E148', cf: { country: 'AU', asOrganization: 'Telstra', verifiedBotCategory: '' } });
+    await open('7.7.7.1', { ref: 'x.com' }); // the same visitor again: counted once, logged once
+    await open('7.7.7.2', { ref: 'https://evil.example/?q=1', ua: 'Mozilla/5.0 HeadlessChrome/140.0', cf: { country: 'US', asOrganization: 'A'.repeat(90), verifiedBotCategory: 'Search Engine Crawler' } });
+    await open('7.7.7.3'); // no cf, no user agent, no ref
+    await open('7.7.7.4', { kind: 'found' }); // only opens are logged
+  } finally { console.log = was; }
+  const opens = lines.filter(a => a[0] === 'race open').map(a => JSON.parse(a[1]));
+  assert.deepEqual(opens, [
+    { track: TRACK, country: 'AU', net: 'Telstra', bot: null, ua: 'mobile', ref: 'x.com' },
+    { track: TRACK, country: 'US', net: 'A'.repeat(60), bot: 'Search Engine Crawler', ua: 'headless', ref: null },
+    { track: TRACK, country: null, net: null, bot: null, ua: 'none', ref: null },
+  ]);
+  assert.ok(!JSON.stringify(lines).includes('7.7.7.'));
+  assert.deepEqual(['Googlebot/2.1', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Safari/605.1.15', 'Mozilla/5.0 (Linux; Android 16) Mobile'].map(uaClass), ['bot', 'desktop', 'mobile']);
 });
 
 test('funnel: page events count once per IP per stage per day; posts count on acceptance; stats are admin only', async () => {

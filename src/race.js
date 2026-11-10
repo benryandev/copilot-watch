@@ -209,6 +209,30 @@ const ipKey = async ip => 'race:ip:' + await hashHex(`race:${ip}`);
 const utcDay = now => new Date(now).toISOString().slice(0, 10);
 const statsKey = (track, day) => `race:stats:${track}:${day}`;
 
+/** What kind of browser a user agent says it is: headless, bot, mobile, desktop, or none when it sent nothing. */
+export function uaClass(ua) {
+  if (!ua) return 'none';
+  if (/headless|phantomjs|puppeteer|playwright|lighthouse|selenium/i.test(ua)) return 'headless';
+  if (/bot|crawl|spider|preview|slurp|facebookexternalhit|scan|monitor|fetch/i.test(ua)) return 'bot';
+  return /mobi|android|iphone|ipad/i.test(ua) ? 'mobile' : 'desktop';
+}
+
+/** The log line for a counted open: where it came from in broad terms, never the address or the full user agent.
+ *  country and net (the network's name, which tells a data centre from a home line) come from Cloudflare; ref is the host
+ *  of the page that linked here, sent by the client (document.referrer), null when typed in or not sent. */
+export function openLine(req, body) {
+  const cf = req.cf || {};
+  const ref = typeof body?.ref === 'string' && /^[a-z0-9.-]{1,80}$/.test(body.ref) ? body.ref : null;
+  return {
+    track: body.track,
+    country: typeof cf.country === 'string' ? cf.country : null,
+    net: typeof cf.asOrganization === 'string' ? cf.asOrganization.slice(0, 60) : null,
+    bot: typeof cf.verifiedBotCategory === 'string' && cf.verifiedBotCategory ? cf.verifiedBotCategory : null,
+    ua: uaClass(req.headers.get('user-agent')),
+    ref,
+  };
+}
+
 /** Count one visitor reaching a stage today, once per IP. Counts are approximate under bursts (KV read, then write). */
 export async function countEvent(kv, track, kind, ip, now = Date.now()) {
   const day = utcDay(now);
@@ -329,7 +353,8 @@ async function raceApi(req, env, { now = Date.now(), waitUntil = null } = {}) {
     const { track, kind } = r.body && typeof r.body === 'object' ? r.body : {};
     if (typeof track !== 'string' || !raceTrack(track)) return json({ error: 'unknown_track' }, 400, origin);
     if (typeof kind !== 'string' || kind === 'post' || !RACE_EVENTS.includes(kind)) return json({ error: 'bad_kind' }, 400, origin);
-    await countEvent(kv, track, kind, req.headers.get('cf-connecting-ip') || '?', now);
+    const fresh = await countEvent(kv, track, kind, req.headers.get('cf-connecting-ip') || '?', now);
+    if (fresh && kind === 'open') console.log('race open', JSON.stringify(openLine(req, r.body))); // one line per counted open, so a day's opens can be told apart afterwards
     return new Response(null, { status: 204, headers: cors(origin) });
   }
 

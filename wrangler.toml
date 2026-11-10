@@ -16,7 +16,8 @@ service = "copilot-world"
 # Workers Logs (6 Nov 2026): keeps the worker's own console lines for 3 days, so a rejected lap's reason can be read
 # after the fact (SellOuT's Lagoon lap was refused with no live tail running). Only those lines: no per-request
 # invocation records (request metadata, and most of the volume). The lines hold counts, error names, lap times and
-# posted names, never addresses, chat ids or tokens.
+# posted names, never addresses, chat ids or tokens. From 10 Nov 2026 one 'race open' line per counted open as well:
+# track, country, network name, browser kind and referrer host, so a day's opens can be told apart (8 Nov's 42 could not).
 [observability]
 enabled = true
 head_sampling_rate = 1
