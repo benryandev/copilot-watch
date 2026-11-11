@@ -596,7 +596,13 @@ test('ghost trace: up to 600 samples (a 60 s lap at ten a second), 601 refused',
   assert.equal(parseTrace(at(600), 59_900, T).ok, true);
   const over = parseTrace(at(601), 60_000, T);
   assert.equal(over.error, 'bad_trace'); assert.equal(over.why, 'shape');
-  // and a post carrying 600 samples with the widest numbers a trace can hold fits under the body limit
-  const wide = Array.from({ length: RACE_TRACE_MAX }, (_, i) => [100_000 + i, -604.9, -604.9, -3.14]);
-  assert.ok(JSON.stringify(good({ name: 'n'.repeat(20), trace: wide, device: 'f'.repeat(32) })).length < RACE_MAX_BODY);
+  // and a post carrying 600 samples at the parser's own bounds fits under the body limit, in bytes: t just under the longest lap
+  // (RACE_MAX_MS), |x| and |z| 1999.9, |h| 99.99 (as the page rounds them), the longest name in four-byte characters, a full set
+  // of splits for the track with the most checkpoints, a device token
+  const most = Math.max(...Object.values(RACE_TRACKS).map(r => r.checkpoints.length));
+  const wide = Array.from({ length: RACE_TRACE_MAX }, (_, i) => [RACE_MAX_MS - 1 - (RACE_TRACE_MAX - 1 - i), -1999.9, -1999.9, -99.99]);
+  const name = '\u{1F600}'.repeat(20); assert.equal(cleanName(name).ok, true, 'twenty emoji are a name');
+  const body = JSON.stringify(good({ name, ms: RACE_MAX_MS - 1, splits: Array.from({ length: most }, (_, i) => RACE_MAX_MS - 2 - most + i), trace: wide, device: 'f'.repeat(32) }));
+  const bytes = Buffer.byteLength(body);
+  assert.ok(bytes < RACE_MAX_BODY, `${bytes} bytes against ${RACE_MAX_BODY}`);
 });

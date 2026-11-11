@@ -101,11 +101,17 @@ test('a full race board (100 rows, 400-sample traces) stays under the 2 MB value
   assert.ok(len < 2 * 1024 * 1024, `${len} bytes`);
 });
 
-test('a full race board with 600-sample traces at their widest numbers stays under the 2 MB value cap', () => {
-  const trace = Array.from({ length: 600 }, (_, i) => [100_000 + i, -604.9, -604.9, -3.14]);
-  const rows = Array.from({ length: 100 }, (_, i) => ({ id: 'x'.repeat(22), name: 'n'.repeat(20), key: 'n'.repeat(20), ipk: 'h'.repeat(64), ak: 'h'.repeat(64), ms: 30000 + i, splits: Array(11).fill(12345), trace, at: 1793969189623 }));
-  const len = JSON.stringify(rows).length;
-  assert.ok(len < 2 * 1024 * 1024, `${len} bytes`);
+test('a full race board of 600-sample traces at the parser\'s bounds stays under the 2 MB value cap', async () => {
+  // Every row at its widest: t just under the longest lap (RACE_MAX_MS), |x| and |z| 1999.9, |h| 99.99 (rounded as stored), the
+  // longest name in four-byte characters (and its key), a full set of splits for the track with the most checkpoints
+  const { RACE_TRACKS, RACE_MAX_MS } = await import('../src/race-tracks.js');
+  const { RACE_TRACE_MAX, RACE_KEEP, RACE_NAME_MAX } = await import('../src/race.js');
+  const most = Math.max(...Object.values(RACE_TRACKS).map(r => r.checkpoints.length));
+  const trace = Array.from({ length: RACE_TRACE_MAX }, (_, i) => [RACE_MAX_MS - RACE_TRACE_MAX + i, -1999.9, -1999.9, -99.99]);
+  const name = '\u{1F600}'.repeat(RACE_NAME_MAX);
+  const rows = Array.from({ length: RACE_KEEP }, (_, i) => ({ id: 'x'.repeat(22), name, key: name, ipk: 'h'.repeat(64), ak: 'h'.repeat(64), ms: RACE_MAX_MS - 1 - i, splits: Array(most).fill(RACE_MAX_MS - 2), trace, at: 1793969189623 }));
+  const bytes = Buffer.byteLength(JSON.stringify(rows));
+  assert.ok(bytes < 2 * 1024 * 1024, `${bytes} bytes against ${2 * 1024 * 1024}`);
 });
 
 test('mirror writes land in order: a slow first put never leaves KV behind the board', async () => {
