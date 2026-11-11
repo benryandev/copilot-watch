@@ -101,6 +101,13 @@ test('a full race board (100 rows, 400-sample traces) stays under the 2 MB value
   assert.ok(len < 2 * 1024 * 1024, `${len} bytes`);
 });
 
+test('a full race board with 600-sample traces at their widest numbers stays under the 2 MB value cap', () => {
+  const trace = Array.from({ length: 600 }, (_, i) => [100_000 + i, -604.9, -604.9, -3.14]);
+  const rows = Array.from({ length: 100 }, (_, i) => ({ id: 'x'.repeat(22), name: 'n'.repeat(20), key: 'n'.repeat(20), ipk: 'h'.repeat(64), ak: 'h'.repeat(64), ms: 30000 + i, splits: Array(11).fill(12345), trace, at: 1793969189623 }));
+  const len = JSON.stringify(rows).length;
+  assert.ok(len < 2 * 1024 * 1024, `${len} bytes`);
+});
+
 test('mirror writes land in order: a slow first put never leaves KV behind the board', async () => {
   // KV whose first put is slow and whose second is fast: without ordering, A's older board lands last
   const kv = memKV(), realPut = kv.put; let n = 0;

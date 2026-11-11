@@ -17,7 +17,7 @@ import { newId } from './paper.js';
 import { boardsOn, remoteBoards, BOARD_BUSY } from './boards.js';
 
 export const RACE_ORIGINS = ['https://strikedrive.xyz', 'https://strike.benryan.com.au', 'http://localhost:8766'];
-export const RACE_KEEP = 100, RACE_SHOW = 10, RACE_RATE_SEC = 10, RACE_MAX_BODY = 16384, RACE_NAME_MAX = 20;
+export const RACE_KEEP = 100, RACE_SHOW = 10, RACE_RATE_SEC = 10, RACE_MAX_BODY = 24576, RACE_NAME_MAX = 20; // body: 24 KB holds a 600-sample trace (was 16 KB with 400)
 /** People who share one public address (a colleague on Tynus's office wifi was told a better time was already on the board,
  * 4 Nov 2026): each device gets its own row, up to this many rows per address, and the post limit is a budget of this many per
  * address per RACE_RATE_SEC rather than one. The budget stays per address, not per device: a token is free to mint. */
@@ -25,8 +25,9 @@ export const RACE_ADDR_ROWS = 5, RACE_RATE_BURST = 5;
 /** A device token: 16 random bytes as hex, made once by the page and kept in its storage. Anything else counts as no token. */
 const DEVICE = /^[0-9a-f]{32}$/i;
 export const parseDevice = v => (typeof v === 'string' && DEVICE.test(v) ? v.toLowerCase() : null);
-/** Ghost trace: at least 2 and at most 400 samples (40 s at ten a second; the page thins longer laps). */
-export const RACE_TRACE_MIN = 2, RACE_TRACE_MAX = 400;
+/** Ghost trace: at least 2 and at most 600 samples (60 s at ten a second; the page thins longer laps). Was 400 until the
+ * figure 8 (11 Nov 2026), whose lap runs past 40 s; boards already holding 400-sample traces read as before. */
+export const RACE_TRACE_MIN = 2, RACE_TRACE_MAX = 600;
 /** A trace must cover at least this share of the lap length (an inside line is shorter than the centreline, a fake is far shorter). */
 export const RACE_TRACE_MIN_PATH = 0.7;
 /** Fastest believable speed between two trace samples. Looser than the segment check (segMaxSpeed): samples are 100 ms apart

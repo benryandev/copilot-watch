@@ -3,7 +3,7 @@
 import { cleanName, parseDevice } from './race.js';
 import { raceTrack, TRACK_IDS } from './race-tracks.js';
 
-export const WORLD_VERSION = '2026-11-07.1'; // bumped on deploy so /presence shows which code the room runs
+export const WORLD_VERSION = '2026-11-11.1'; // bumped on deploy so /presence shows which code the room runs
 export const WORLD_OFF_KEY = 'world:off'; // any value under this KV key pauses new connections and closes live ones
 export const WORLD_OFF_TTL_MS = 30_000; // how long the room trusts its last read of the kill switch
 
@@ -65,12 +65,17 @@ const fin = v => typeof v === 'number' && Number.isFinite(v);
 const r1 = v => Math.round(v * 10) / 10, r2 = v => Math.round(v * 100) / 100;
 const TAU = Math.PI * 2;
 
-/** Validate and round a pose frame {x, z, h, s, j?}. Returns {ok, x, z, h, s, j} or {ok: false}. */
+/** Validate and round a pose frame {x, z, h, s, j?, l?}. Returns {ok, x, z, h, s, j, l?} or {ok: false}. Unknown fields are
+ * dropped (never relayed). `l` is the level a car is on at a track's bridge deck (11 Nov 2026): 1 on the deck, 0 or absent
+ * anywhere else (the page sends it only when 1, and pages from before decks never do); any other value is a bad frame. */
 export function parsePose(m) {
   if (!m || typeof m !== 'object' || !fin(m.x) || !fin(m.z) || !fin(m.h) || !fin(m.s)) return { ok: false };
   if (Math.hypot(m.x, m.z) > WORLD_RADIUS || m.s < 0 || m.s > WORLD_MAX_SPEED + 0.5) return { ok: false };
+  if (m.l !== undefined && m.l !== 0 && m.l !== 1) return { ok: false };
   let h = m.h % TAU; if (h > Math.PI) h -= TAU; else if (h <= -Math.PI) h += TAU;
-  return { ok: true, x: r1(m.x), z: r1(m.z), h: r2(h), s: Math.min(WORLD_MAX_SPEED, r1(m.s)), j: m.j === 1 || m.j === true };
+  const pose = { ok: true, x: r1(m.x), z: r1(m.z), h: r2(h), s: Math.min(WORLD_MAX_SPEED, r1(m.s)), j: m.j === 1 || m.j === true };
+  if (m.l === 1) pose.l = 1;
+  return pose;
 }
 
 // ---- the room ----
@@ -203,7 +208,7 @@ export class Room {
   /** The head count everyone hears on join, leave and kick. */
   count() { return { t: 'n', online: this.online(), zones: this.zones() }; }
 
-  peerView(p) { return { id: p.id, name: p.name, colour: p.colour, zone: p.zone, ...carOf(p), ...(p.pose ? { x: p.pose.x, z: p.pose.z, h: p.pose.h, s: p.pose.s } : {}) }; }
+  peerView(p) { return { id: p.id, name: p.name, colour: p.colour, zone: p.zone, ...carOf(p), ...(p.pose ? { x: p.pose.x, z: p.pose.z, h: p.pose.h, s: p.pose.s, ...(p.pose.l ? { l: 1 } : {}) } : {}) }; }
 
   /** One frame from a socket. Returns the messages to send, whether to close, and when to flush a held snapshot. */
   onMessage(id, raw, now) {
@@ -440,6 +445,7 @@ export class Room {
       const q = this.players.get(id);
       if (!q?.pose) continue;
       const row = [q.id, q.pose.x, q.pose.z, q.pose.h, q.pose.s, q.pose.j ? 1 : 0];
+      if (q.pose.l) row.push(1); // on a bridge deck: a seventh field, which pages from before decks never read
       const s = snaps.get(q.zone);
       if (s) s.p.push(row); else snaps.set(q.zone, { t: 's', now, p: [row] });
     }

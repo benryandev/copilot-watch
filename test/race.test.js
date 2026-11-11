@@ -588,3 +588,15 @@ test('the Lagoon: /race/top is 200 with an empty board', async () => {
   const r = await handleRaceApi(req('GET', `/race/top?track=${LAG}`), env());
   assert.equal(r.status, 200); assert.deepEqual((await r.json()).top, []);
 });
+
+test('ghost trace: up to 600 samples (a 60 s lap at ten a second), 601 refused', () => {
+  assert.equal(RACE_TRACE_MAX, 600);
+  const at = n => { const L = { ms: (n - 1) * 100 }; return traceFor(L); }; // n samples, 100 ms apart, the lap's whole length
+  assert.equal(at(600).length, 600); assert.equal(at(601).length, 601);
+  assert.equal(parseTrace(at(600), 59_900, T).ok, true);
+  const over = parseTrace(at(601), 60_000, T);
+  assert.equal(over.error, 'bad_trace'); assert.equal(over.why, 'shape');
+  // and a post carrying 600 samples with the widest numbers a trace can hold fits under the body limit
+  const wide = Array.from({ length: RACE_TRACE_MAX }, (_, i) => [100_000 + i, -604.9, -604.9, -3.14]);
+  assert.ok(JSON.stringify(good({ name: 'n'.repeat(20), trace: wide, device: 'f'.repeat(32) })).length < RACE_MAX_BODY);
+});

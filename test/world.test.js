@@ -35,6 +35,16 @@ test('parsePose: accepts a rounded in-bounds pose, rejects garbage', () => {
   assert.equal(WORLD_RADIUS, 605); assert.equal(parsePose({ x: 565, z: 0, h: 0, s: 0 }).ok, true, "world radius 575 - 10"); assert.equal(parsePose({ x: 605, z: 0, h: 0, s: 0 }).ok, true); assert.equal(WORLD_MAX_SPEED, 40); assert.equal(WORLD_FRAME_MAX, 256);
 });
 
+test('parsePose: an optional level l (0 or 1) at a bridge deck; any other value is refused; unknown fields are dropped', () => {
+  // 1 is kept, 0 or none is no field at all, so a pose off every deck (and every old page's) is exactly as before
+  assert.deepEqual(parsePose({ t: 'p', x: 1, z: 2, h: 0, s: 3, l: 1 }), { ok: true, x: 1, z: 2, h: 0, s: 3, j: false, l: 1 });
+  assert.deepEqual(parsePose({ t: 'p', x: 1, z: 2, h: 0, s: 3, l: 0 }), { ok: true, x: 1, z: 2, h: 0, s: 3, j: false });
+  assert.deepEqual(parsePose({ t: 'p', x: 1, z: 2, h: 0, s: 3 }), { ok: true, x: 1, z: 2, h: 0, s: 3, j: false });
+  for (const l of [2, -1, 0.5, true, '1', null, NaN]) assert.equal(parsePose({ x: 1, z: 2, h: 0, s: 3, l }).ok, false, `l: ${String(l)}`);
+  // what the room did with an unknown field before l (and still does): the pose passes and the field goes nowhere
+  assert.deepEqual(parsePose({ x: 1, z: 2, h: 0, s: 3, q: 7 }), { ok: true, x: 1, z: 2, h: 0, s: 3, j: false });
+});
+
 // ---- the room ----
 const room = o => new Room({ ownerToken: 'own', ...o });
 const hi = (r, id, name, now = 0, extra = {}) => { r.open(id, { ipKey: 'k' + id }, now); return r.onMessage(id, JSON.stringify({ t: 'hi', v: 1, name, ...extra }), now); };
@@ -699,4 +709,25 @@ test('car: the attachment keeps it through a wake-up; a junk stored car is dropp
   assert.equal(r2.peerView(r2.players.get('a')).car, 2); assert.equal('car' in r2.peerView(r2.players.get('b')), false);
   const r3 = room(); r3.restore([{ id: 'x', name: 'X', colour: '#fff', ipKey: 'kx', since: 0, car: 9 }]);
   assert.equal('car' in r3.peerView(r3.players.get('x')), false);
+});
+
+test('room: a pose with l: 1 is relayed with its level, l: 2 is a bad frame, no l is relayed as before', () => {
+  const r = room(); hi(r, 'a', 'A'); hi(r, 'b', 'B');
+  // on the deck: the row gains a seventh field, 1; an old page reads the first six and never sees it
+  assert.deepEqual(to(pose(r, 'a', 0, { l: 1 }).out, 'b'), [{ t: 's', now: 0, p: [['a', 1, 2, 0.5, 3, 0, 1]] }]);
+  assert.equal(r.peerView(r.players.get('a')).l, 1, 'a joiner hears the level in ok.peers');
+  // off it (l omitted, or 0): the six-field row of today
+  assert.deepEqual(to(pose(r, 'a', 100, { x: 5 }).out, 'b'), [{ t: 's', now: 100, p: [['a', 5, 2, 0.5, 3, 0]] }]);
+  assert.equal('l' in r.peerView(r.players.get('a')), false);
+  assert.deepEqual(to(pose(r, 'a', 200, { x: 6, l: 0 }).out, 'b'), [{ t: 's', now: 200, p: [['a', 6, 2, 0.5, 3, 0]] }]);
+  // any other level is a bad frame: the pose is not taken, and three in a row close the socket as any bad frame does
+  const bad = pose(r, 'a', 500, { x: 9, l: 2 });
+  assert.equal(r.players.get('a').pose.x, 6); assert.equal(r.players.get('a').bad, 1); assert.equal(bad.close, undefined);
+  pose(r, 'a', 510, { l: 2 });
+  assert.equal(pose(r, 'a', 520, { l: 2 }).close, 'bad');
+});
+
+test('room: the version names the deploy that relays a pose level', async () => {
+  const { WORLD_VERSION } = await import('../src/world.js');
+  assert.equal(WORLD_VERSION, '2026-11-11.1');
 });
